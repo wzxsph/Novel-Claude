@@ -1,4 +1,6 @@
 import click
+import os
+import json
 from s01_world_builder import run_world_builder
 from s02_volume_planner import run_volume_planner, plan_macro_outlines
 from s03_scene_writer import run_scene_writer
@@ -37,10 +39,66 @@ def write(volume, chapters):
         start = end = int(chapters)
         
     run_scene_writer(volume, start, end)
-    
-    # User architecture feedback:
-    # Ensure memory embedding threads complete successfully without being terminated brutally
     wait_for_background_tasks()
+
+@cli.command()
+@click.option('--volume', type=int, required=True, help='目标卷号')
+@click.option('--chapters', type=str, required=True, help='章节范围 (如 1-50)')
+def batch_build(volume, chapters):
+    """【Batch】阶段 1：构建批量请求 JSONL 文件"""
+    from s03_scene_writer import generate_batch_jsonl
+    from utils.config import BATCH_DIR
+    
+    if '-' in chapters:
+        start, end = map(int, chapters.split('-'))
+    else:
+        start = end = int(chapters)
+        
+    output_path = os.path.join(BATCH_DIR, f"vol_{volume:02d}_ch_{start}_{end}_req.jsonl")
+    generate_batch_jsonl(volume, start, end, output_path)
+
+@cli.command()
+@click.argument('jsonl_path')
+def batch_submit(jsonl_path):
+    """【Batch】阶段 2：提交 JSONL 到智谱云端"""
+    from utils.batch_client import submit_batch_task
+    import os
+    
+    if not os.path.exists(jsonl_path):
+        print(f"[ERROR] 找不到文件: {jsonl_path}")
+        return
+        
+    batch_id = submit_batch_task(jsonl_path, desc=f"Submit: {os.path.basename(jsonl_path)}")
+    print(f"\n[✓] 任务提交成功！\nBatch ID: {batch_id}\n请妥善保存此 ID，后续同步需使用。")
+
+@cli.command()
+@click.argument('batch_id')
+def batch_sync(batch_id):
+    """【Batch】阶段 3：轮询状态、下载结果并组装成稿"""
+    from utils.batch_client import get_batch_status, download_batch_results
+    from s03_scene_writer import process_batch_results
+    from utils.config import BATCH_DIR
+    import time
+    
+    print(f"[Batch] 正在监听任务 {batch_id} ...")
+    while True:
+        status = get_batch_status(batch_id)
+        current_status = status.status
+        print(f"  > 状态: {current_status}")
+        
+        if current_status == "completed":
+            res_path = os.path.join(BATCH_DIR, f"{batch_id}_results.jsonl")
+            err_path = os.path.join(BATCH_DIR, f"{batch_id}_errors.jsonl")
+            if download_batch_results(batch_id, res_path, err_path):
+                process_batch_results(res_path)
+                wait_for_background_tasks()
+                print("\n[✓] 批量同步任务全部完成！")
+            return
+        elif current_status in ["failed", "cancelled", "expired"]:
+            print(f"[ERROR] 任务状态异常: {current_status}")
+            return
+            
+        time.sleep(60)
 
 @cli.command()
 @click.option('--volume', type=int, required=True, help='目标卷号')
