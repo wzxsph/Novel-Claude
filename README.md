@@ -10,6 +10,8 @@
 - **上下文物理隔离 (Context Isolation)**：每个场景（Scene）的生成都在一个完全独立的子进程中完成，写完即销毁，从物理层面杜绝上下文污染。
 - **状态绝对持久化 (State Persistence)**：所有世界观、人物卡、分卷大纲均为强类型 JSON 文件，不依赖进程内存储。
 - **动态记忆 RAG (Memory Bus)**：利用 ChromaDB 向量数据库，按需倒序检索实体最新状态（如伤势、位置、法宝状态），实现精准的剧情连贯性。
+- **Batch API 批量生成 (New!)**：原生支持智谱大模型批量任务模式，成本直接减半，可一次性提交 50 章甚至全本文本生成渲染。
+- **防崩溃内容过滤**：内置 `1301` 敏感内容过滤器处理机制，遇到因尺度触碰审查的片段可自动捕获异常并跳过，保证无人值守长线运行。
 
 ---
 
@@ -21,12 +23,13 @@ novel_claude/
 ├── cli.py                  # 命令行入口（用户唯一交互点）
 ├── s01_world_builder.py    # 阶段1：世界观设定引擎
 ├── s02_volume_planner.py   # 阶段2：分卷与章节打点
-├── s03_scene_writer.py     # 阶段3：执笔集群（核心爆发引擎）
+├── s03_scene_writer.py     # 阶段3：执笔集群（支持同步流式与 Batch 批量）
 ├── s04_memory_rag.py       # 横切面：动态记忆总线（AOP 风格）
 ├── utils/
-│   ├── config.py           # 环境配置 & 全局路径 & 后台线程管理
-│   └── llm_client.py       # LLM 调用封装（三种专用模式）
-└── .novel/                 # 运行时数据中心（存储 JSON、MD 和 ChromaDB）
+│   ├── batch_client.py     # 批量任务封装（提交任务、轮询同步）
+│   ├── config.py           # 环境配置 & 全局路径 & 后台守护线程管理
+│   └── llm_client.py       # LLM 调用封装（含安全异常处理）
+└── .novel/                 # 运行时数据中心（存储 JSON、MD、ChromaDB 和离线工单）
 ```
 
 ### 模块详解
@@ -61,7 +64,7 @@ uv pip install -r requirements.txt
 ```env
 ANTHROPIC_API_KEY=你的智谱AI_API_KEY
 ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic
-MODEL_ID=glm-4-flash  # 建议初始使用 flash 降低成本
+MODEL_ID=glm-4  # 推荐使用 glm-4（Batch 模式默认基于可用模型提供50%折扣）
 ```
 
 > [!IMPORTANT]
@@ -88,11 +91,26 @@ uv run python cli.py plan --volume 1
 ```
 
 ### 阶段 3：启动自动化写作
+
+#### 模式 A：实时流式生成（适合短篇生成或单章调试，带终端动态渲染）
 ```bash
 # 自动生成第 1 卷的 1 到 5 章
 uv run python cli.py write --volume 1 --chapters 1-5
 ```
-生成的成品 Markdown 文件将存放在 `出版级成稿目录/` (或 `.novel/manuscripts/`)。
+
+#### 模式 B：大规模批量生成（生产级推荐：半价折扣、极高吞吐量）
+```bash
+# 1. 构建离线工单库文件 (.jsonl)
+uv run python cli.py batch-build --volume 1 --chapters 1-50
+
+# 2. 将包含上百个场景请求的工单推送到智谱云端
+uv run python cli.py batch-submit .novel/batch_jobs/vol_01_ch_1_50_req.jsonl
+# (命令会输出 Batch ID，例如 batch_xxx，请妥善保存)
+
+# 3. 轮询并同步结果（可放在服务器后台挂机）
+# 任务结束后，它会自动下载云端排版好的分段内容，按序组装成章节，并保存到成稿目录
+uv run python cli.py batch-sync <刚才返回的_batch_id>
+```
 
 ### 特殊阶段：手动重补记忆 (Reindex)
 如果因为 API 报错或网络中断导致某几章的记忆没有存入向量库：
