@@ -8,20 +8,34 @@ from utils.config import wait_for_background_tasks
 
 @click.group()
 def cli():
-    """网文版简易 Claude Code 小说生成系统 (novel-cli)"""
+    """🚀 网文版简易 Claude Code 小说生成系统 (Novel-Claude)
+    
+    集成世界观初始化、分卷大纲规划、多智能体场景并写作以及 RAG 动态记忆管理。
+    支持 标准 API 实时码字 和 Batch API 大规模并发码字（5折优惠）。
+    """
     pass
 
 @cli.command()
 @click.argument('logline')
 def init(logline):
-    """阶段1：初始化世界观（基于一句核心创意）"""
+    """【阶段 1】初始化世界观与核心设定。
+    
+    LOGLINE: 一句关于该小说的核心创意或简介。系统将据此生成规则、力量体系、主要角色与势力分布。
+    
+    示例: uv run python cli.py init "一个在修真界利用赛博插件强开灵根的科幻转玄幻故事"
+    """
     run_world_builder(logline)
     wait_for_background_tasks()
 
 @cli.command()
-@click.option('--volume', type=int, default=None, help='指定的卷号，如果为空则仅生成宏观大纲')
+@click.option('--volume', type=int, default=None, help='指定的卷号(1-10)。如果为空，则执行全书 10 卷的宏观大纲规划。')
 def plan(volume):
-    """阶段2：生成大纲与指定卷微观细纲"""
+    """【阶段 2】生成宏观卷大纲 或 指定卷的微观章节细纲(Beats)。
+    
+    说明：
+    1. 不带 --volume 时，生成全书 10 卷的宏观框架（核心冲突、战力上限）。
+    2. 带 --volume 时，为该卷生成 50 章的微观打点(Scene Beats)，并自动归一化每章字数为 5000 字。
+    """
     if volume is None:
         plan_macro_outlines()
     else:
@@ -29,10 +43,16 @@ def plan(volume):
     wait_for_background_tasks()
 
 @cli.command()
-@click.option('--volume', type=int, required=True, help='目标卷号')
-@click.option('--chapters', type=str, required=True, help='要生成的章节范围格式如 1-5 或单章 1')
+@click.option('--volume', type=int, required=True, help='目标卷号。')
+@click.option('--chapters', type=str, required=True, help='范围格式如 "1-5" 或单章 "1"。')
 def write(volume, chapters):
-    """阶段3：启动场景集群并发/串行写作，以及动态记忆更新"""
+    """【阶段 3】实时码字：启动场景子智能体集群进行创作。
+    
+    该模式使用标准 Chat API，支持实时流式输出和动态 RAG 记忆更新。
+    每个场景生成前会自动检查 Checkpoint，跳过已生成的稿件。
+    
+    示例: uv run python cli.py write --volume 1 --chapters 1-10
+    """
     if '-' in chapters:
         start, end = map(int, chapters.split('-'))
     else:
@@ -42,10 +62,14 @@ def write(volume, chapters):
     wait_for_background_tasks()
 
 @cli.command()
-@click.option('--volume', type=int, required=True, help='目标卷号')
-@click.option('--chapters', type=str, required=True, help='章节范围 (如 1-50)')
+@click.option('--volume', type=int, required=True, help='目标卷号。')
+@click.option('--chapters', type=str, required=True, help='章节范围 (如 1-50)。')
 def batch_build(volume, chapters):
-    """【Batch】阶段 1：构建批量请求 JSONL 文件"""
+    """【Batch API】第一步：构建批量请求 JSONL 文件。
+    
+    读取指定章节的 Beats 数据，注入 RAG 记忆，并打包成智谱 Batch API 所需的格式。
+    生成的请求文件将保存在配置的 BATCH_DIR 目录中。
+    """
     from s03_scene_writer import generate_batch_jsonl
     from utils.config import BATCH_DIR
     
@@ -60,7 +84,11 @@ def batch_build(volume, chapters):
 @cli.command()
 @click.argument('jsonl_path')
 def batch_submit(jsonl_path):
-    """【Batch】阶段 2：提交 JSONL 到智谱云端"""
+    """【Batch API】第二步：上传 JSONL 并提交异步任务。
+    
+    JSONL_PATH: 第一步生成的 .jsonl 文件路径。
+    提交后会返回 Batch ID，请务必记录该 ID，因为智谱 API 目前由于异步特性，需要手动 ID 才能进行第三步同步。
+    """
     from utils.batch_client import submit_batch_task
     import os
     
@@ -74,7 +102,16 @@ def batch_submit(jsonl_path):
 @cli.command()
 @click.argument('batch_id')
 def batch_sync(batch_id):
-    """【Batch】阶段 3：轮询状态、下载结果并组装成稿"""
+    """【Batch API】第三步：轮询状态并同步合并成稿。
+    
+    BATCH_ID: 第二步返回的任务 ID。
+    
+    特点：
+    1. 自动重试与轮询（每分钟一次）。
+    2. 任务完成后自动下载结果文件。
+    3. 自动调用 Editor Agent 对场景片段进行平滑合并。
+    4. 自动更新 RAG 向量记忆库。
+    """
     from utils.batch_client import get_batch_status, download_batch_results
     from s03_scene_writer import process_batch_results
     from utils.config import BATCH_DIR
@@ -101,10 +138,13 @@ def batch_sync(batch_id):
         time.sleep(60)
 
 @cli.command()
-@click.option('--volume', type=int, required=True, help='目标卷号')
-@click.option('--chapters', type=str, required=True, help='要重新补齐记忆的章节范围 (如 1-5)')
+@click.option('--volume', type=int, required=True, help='目标卷号。')
+@click.option('--chapters', type=str, required=True, help='范围格式如 "1-5"。')
 def reindex(volume, chapters):
-    """【补救措施】手动将已生成的成稿重新导入向量记忆库"""
+    """【工具】补救措施：手动将已生成的成稿重新导入 RAG 记忆库。
+    
+    如果由于网络报错等原因导致某些章节没有成功入库，可使用此命令通过 Aho-Corasick 自动机重新提取实体并入库。
+    """
     from s03_scene_writer import run_scene_writer
     from s04_memory_rag import post_generation_hook
     from utils.config import MANUSCRIPTS_DIR

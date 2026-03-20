@@ -1,9 +1,12 @@
 import re
+import os
+import json
 import chromadb
+import ahocorasick
 from chromadb.utils import embedding_functions
 from zhipuai import ZhipuAI
-from utils.config import MEMORY_DIR, ANTHROPIC_API_KEY, register_background_task
-from utils.llm_client import extract_entities, client as llm_client, MODEL_ID
+from utils.config import MEMORY_DIR, SETTINGS_DIR, ANTHROPIC_API_KEY, register_background_task
+from utils.llm_client import client as llm_client, MODEL_ID
 
 class ZhipuEmbeddingFunction(embedding_functions.EmbeddingFunction):
     def __init__(self):
@@ -27,11 +30,49 @@ def condense_state(entity: str, context_chunks: list[str]) -> str:
     res = llm_client.chat.completions.create(model=MODEL_ID, messages=messages, temperature=0.1)
     return res.choices[0].message.content.strip()
 
+def build_entity_automaton():
+    """Builds an Aho-Corasick automaton from world settings for ultra-fast entity matching."""
+    A = ahocorasick.Automaton()
+    entities = []
+    
+    # Load characters
+    char_path = os.path.join(SETTINGS_DIR, "main_characters.json")
+    if os.path.exists(char_path):
+        with open(char_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            for c in data.get("characters", []):
+                entities.append(c["name"])
+    
+    # Load factions
+    fac_path = os.path.join(SETTINGS_DIR, "factions.json")
+    if os.path.exists(fac_path):
+        with open(fac_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            for fac in data.get("factions", []):
+                entities.append(fac.get("name", ""))
+                
+    for idx, entity in enumerate(set(entities)):
+        if entity.strip():
+            A.add_word(entity, (idx, entity))
+            
+    A.make_automaton()
+    return A
+
+ENTITY_AUTOMATON = build_entity_automaton()
+
+def extract_entities_fast(text: str) -> list:
+    """Uses AC Automaton to extract entities in milliseconds without API calls."""
+    if not text:
+        return []
+    # ahocorasick iter returns tuples like (end_index, (value_index, original_string))
+    found = [item[1][1] for item in ENTITY_AUTOMATON.iter(text)]
+    return list(set(found))
+
 def pre_generation_hook(beat_data: dict) -> str:
     """
     【拦截器 - 前置注入】：在 Subagent 启动前为其准备最新的一批状态弹药
     """
-    entities = extract_entities(beat_data.get('plot_summary', ''))
+    entities = extract_entities_fast(beat_data.get('plot_summary', ''))
     if not entities:
         return ""
         
@@ -112,7 +153,7 @@ def _background_update_task(chapter_id: int, final_content: str):
         metadatas = []
         
         for i, chunk in enumerate(chunks):
-            chunk_entities = extract_entities(chunk)
+            chunk_entities = extract_entities_fast(chunk)
             # Even if no entities are extracted, we should store the chunk for semantic search
             involved = ",".join(chunk_entities) if chunk_entities else ""
             documents.append(chunk)

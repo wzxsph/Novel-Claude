@@ -5,11 +5,26 @@ from utils.llm_client import generate_stream
 from s04_memory_rag import pre_generation_hook, post_generation_hook
 from s02_volume_planner import get_world_context
 
-def spawn_writer_subagent(previous_text: str, beat_data: dict, global_context: str) -> str:
+def spawn_writer_subagent(volume_id: int, chapter_id: int, previous_text: str, beat_data: dict, global_context: str) -> str:
     """
     无死角语境隔离的 Subagent。负责单一切片的专注生成。
     """
-    print(f"\n[Subagent] 正在生成场景 {beat_data['scene_id']} ... (目标字数: {beat_data['word_count_target']})")
+    scene_id = beat_data['scene_id']
+    target_words = beat_data['word_count_target']
+    
+    print(f"\n[Subagent] 正在生成场景 {scene_id} ... (目标字数: {target_words})")
+    
+    # 状态检查 (Checkpointing)：文件存在且字数达标 80% 视为已完成
+    save_dir = os.path.join(MANUSCRIPTS_DIR, f"vol_{volume_id:02d}", f"ch_{chapter_id:03d}_scenes")
+    os.makedirs(save_dir, exist_ok=True)
+    scene_file_path = os.path.join(save_dir, f"scene_{scene_id:03d}.txt")
+    
+    if os.path.exists(scene_file_path):
+        with open(scene_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            if len(content) >= target_words * 0.8:
+                print(f"[Skip] 场景 {scene_id} 已存在且字数达标 ({len(content)}字)，跳过生成。")
+                return content
     
     # 抽取并检索相关实体最新状态
     rag_context = pre_generation_hook(beat_data)
@@ -22,12 +37,17 @@ def spawn_writer_subagent(previous_text: str, beat_data: dict, global_context: s
     - 视角人物：{beat_data.get('pov_character', '未知')}
     - 剧情概要：{beat_data['plot_summary']}
     - 描写重点：{', '.join(beat_data.get('action_items', []))}
-    - 目标字数：约 {beat_data['word_count_target']} 字
+    - 目标字数：严格控制在 {beat_data['word_count_target']} 字左右，绝不能过度水字数。
     
     请严格按照小说正文格式展开这段剧情。直接输出正文，不要带有分析、总结等任何多余的废话。
     """
     
     scene_content = generate_stream(prompt)
+    
+    # 生成完毕后落盘保存，以便未来断点续传
+    with open(scene_file_path, 'w', encoding='utf-8') as f:
+        f.write(scene_content)
+        
     return scene_content
 
 def merge_and_edit_chapter(chapter_id: int, scenes_content: list) -> str:
@@ -38,12 +58,16 @@ def merge_and_edit_chapter(chapter_id: int, scenes_content: list) -> str:
     raw_text = "\n\n***\n\n".join(scenes_content)
     
     edit_prompt = f"""
-    请将以下零散的场景拼接成一章连贯的网文。
-    任务：
-    1. 抹除 "***" 分割线，替换为平滑的自然段过渡。
-    2. 检查逻辑连贯性，保持强烈的断章悬念感。
-    3. 直接输出小说的正文内容，绝不要输出分析、多余的标记。
-    \n\n{raw_text}
+    你是一个网文主编。以下是刚从车间流水线出来的 {len(scenes_content)} 个场景拼接草稿。
+    请你消除它们之间的割裂感，平滑自然段过渡。
+    
+    要求：
+    1. 绝对不要大量删减动作和对话细节（保持原字数 95% 以上）。
+    2. 修复可能出现的视角跳跃（如上一段是主角，下一段突兀变成反派）。
+    3. 润色结尾，留下强烈的网文悬念（断章感）。
+    4. 抹除 "***" 分割线，替换为平滑的自然段过渡。
+    5. 直接输出小说的正文内容，绝不要输出分析、总结、多余的标记。
+    \n\n【草稿正文】:\n{raw_text}
     """
     
     final_chapter = generate_stream(edit_prompt, system_message="你是顶尖网文白金编辑，专门做段落润色和节奏把控。")
@@ -68,7 +92,7 @@ def run_scene_writer(volume_id: int, start_chapter: int, end_chapter: int):
         
         # Serialize the agents generation
         for beat in beat_sheet["beats"]:
-            scene_text = spawn_writer_subagent(previous_text, beat, world_context)
+            scene_text = spawn_writer_subagent(volume_id, chapter_id, previous_text, beat, world_context)
             chapter_scenes.append(scene_text)
             # Update previous_text for the upcoming Subagent
             previous_text = scene_text
@@ -118,7 +142,7 @@ def generate_batch_jsonl(volume_id: int, start_chap: int, end_chap: int, output_
             - 视角人物：{beat.get('pov_character', '未知')}
             - 剧情概要：{beat['plot_summary']}
             - 描写重点：{', '.join(beat.get('action_items', []))}
-            - 目标字数：约 {beat['word_count_target']} 字
+            - 目标字数：严格控制在 {beat['word_count_target']} 字左右，绝不能过度水字数。
             
             请严格按照小说正文格式展开这段剧情。直接输出正文，不要带有分析、总结等任何多余的废话。
             """

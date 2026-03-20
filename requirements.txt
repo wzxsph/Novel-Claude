@@ -6,3 +6,4 @@ rich
 python-dotenv
 sniffio
 anyio
+pyahocorasick>=2.1.0
