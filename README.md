@@ -1,5 +1,8 @@
 # 🚀 Novel-Claude V3: Agentic Novel Generation Framework
 
+[简体中文](README.md) | [English](README_EN.md) | [日本語](README_JP.md)
+
+
 > [!WARNING]
 > **本项目还处于测试阶段，还有诸多功能不完善，请谨慎使用。**
 
