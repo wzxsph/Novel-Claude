@@ -1,5 +1,8 @@
 # 🚀 Novel-Claude V3: Agentic Novel Generation Framework
 
+> [!WARNING]
+> **本项目还处于测试阶段，还有诸多功能不完善，请谨慎使用。**
+
 Novel-Claude 是一个基于大语言模型（如智谱 GLM-4）构建的全自动长篇小说生成管线。在 V3 版本中，它从传统的线性脚本流水线彻底进化为具有极高扩展性的 **微内核 + 插件生态架构 (Microkernel & Plugin Architecture)**。
 
 通过底层的 `EventBus` 事件引擎与动态 `PluginManager`，它支持极其复杂的社区插件生态（Skills）以及基于 ReAct 多轮交互的复杂智能体（Agents）。
