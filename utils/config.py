@@ -11,7 +11,10 @@ ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "https://open.bigmodel.cn/a
 MODEL_ID = os.getenv("MODEL_ID", "glm-4.6v")
 FLASH_MODEL_ID = "glm-4.6v"  # Used for cheap extraction tasks
 
-NOVEL_DIR = ".novel"
+# Workspace Settings
+NOVEL_NAME = os.getenv("NOVEL_NAME", "").strip()
+NOVEL_DIR = f".novel_{NOVEL_NAME}" if NOVEL_NAME else ".novel"
+
 SETTINGS_DIR = os.path.join(NOVEL_DIR, "settings")
 VOLUMES_DIR = os.path.join(NOVEL_DIR, "volumes")
 MANUSCRIPTS_DIR = os.path.join(NOVEL_DIR, "manuscripts")
@@ -19,7 +22,7 @@ MEMORY_DIR = os.path.join(NOVEL_DIR, "memory")
 BATCH_DIR = os.path.join(NOVEL_DIR, "batch_jobs")
 
 # Ensure base directories exist
-for d in [SETTINGS_DIR, VOLUMES_DIR, MANUSCRIPTS_DIR, MEMORY_DIR, BATCH_DIR]:
+for d in [NOVEL_DIR, SETTINGS_DIR, VOLUMES_DIR, MANUSCRIPTS_DIR, MEMORY_DIR, BATCH_DIR]:
     os.makedirs(d, exist_ok=True)
 
 # Thread management for graceful shutdown

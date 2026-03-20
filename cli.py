@@ -13,6 +13,9 @@ def cli():
     集成世界观初始化、分卷大纲规划、多智能体场景并写作以及 RAG 动态记忆管理。
     支持 标准 API 实时码字 和 Batch API 大规模并发码字（5折优惠）。
     """
+    from utils.config import NOVEL_NAME
+    current_proj = NOVEL_NAME if NOVEL_NAME else "Default (未指定)"
+    click.echo(click.style(f"当前激活项目: {current_proj}", fg="cyan", bold=True))
     pass
 
 @cli.command()
