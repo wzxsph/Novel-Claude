@@ -8,10 +8,10 @@ from utils.config import wait_for_background_tasks
 
 @click.group()
 def cli():
-    """🚀 网文版简易 Claude Code 小说生成系统 (Novel-Claude)
+    """🚀 Novel-Claude V3 — 微内核插件生态网文生成系统
     
-    集成世界观初始化、分卷大纲规划、多智能体场景并写作以及 RAG 动态记忆管理。
-    支持 标准 API 实时码字 和 Batch API 大规模并发码字（5折优惠）。
+    集成世界观初始化、分卷大纲规划、多智能体场景并写作、RAG 动态记忆管理。
+    支持标准 API 实时码字、Batch API 大规模并发码字（5 折优惠）、以及 V3 Skill 插件生态。
     """
     from utils.config import NOVEL_NAME, NOVEL_DIR
     current_proj = NOVEL_NAME if NOVEL_NAME else "Default (未指定)"
@@ -179,6 +179,94 @@ def reindex(volume, chapters):
             print(f"[WARN] 找不到成稿文件: {path}")
             
     wait_for_background_tasks()
+
+@cli.group()
+def skills():
+    """【V3 插件管理】查看、重载、或自动生成 Skill 插件。"""
+    pass
+
+@skills.command("list")
+def skills_list():
+    """列出所有已加载的 V3 插件和 skills/ 目录下可被发现的插件文件夹。"""
+    from core.novel_context import NovelContext
+    from core.plugin_manager import PluginManager
+    from utils.workspace import WorkspaceManager
+    from utils.config import NOVEL_DIR
+
+    workspace = WorkspaceManager(NOVEL_DIR)
+    context = NovelContext(workspace)
+    mgr = PluginManager(context)
+    mgr.scan_and_load()
+
+    if context.active_skills:
+        click.echo(click.style(f"\n🔌 已加载 {len(context.active_skills)} 个插件:", fg="green", bold=True))
+        for name, skill in context.active_skills.items():
+            click.echo(f"  🟢 {skill.name}  (skills/{name}/skill.py)")
+    else:
+        click.echo(click.style("\n(暂无已加载的插件)", fg="yellow"))
+
+    # 列出 skills/ 中的其他文件夹
+    skills_dir = "skills"
+    if os.path.exists(skills_dir):
+        all_dirs = [d for d in os.listdir(skills_dir) if os.path.isdir(os.path.join(skills_dir, d))]
+        unloaded = [d for d in all_dirs if d not in context.active_skills]
+        if unloaded:
+            click.echo(click.style(f"\n⚠️ 以下目录未成功加载 (可能缺少 skill.py 或有报错):", fg="yellow"))
+            for d in unloaded:
+                click.echo(f"  ⚪ skills/{d}/")
+
+@skills.command("reload")
+@click.argument("name", required=False, default=None)
+def skills_reload(name):
+    """热重载插件。不指定 NAME 则重载全部，指定 NAME 则只重载单个。
+    
+    NAME: 可选，skills/ 目录下的文件夹名 (如 core_memory_rag)。
+    """
+    from core.novel_context import NovelContext
+    from core.plugin_manager import PluginManager
+    from utils.workspace import WorkspaceManager
+    from utils.config import NOVEL_DIR
+
+    workspace = WorkspaceManager(NOVEL_DIR)
+    context = NovelContext(workspace)
+    mgr = PluginManager(context)
+
+    if name:
+        click.echo(f"[INFO] 热重载插件: {name}")
+        mgr.scan_and_load()  # 先全量加载
+        mgr.hot_reload(name)
+    else:
+        click.echo("[INFO] 重载全部插件...")
+        mgr.scan_and_load()
+
+    click.echo(click.style(f"[✓] 当前共加载 {len(context.active_skills)} 个插件。", fg="green"))
+
+@skills.command("build")
+@click.argument("request")
+def skills_build(request):
+    """让 SkillBuilder Agent 根据自然语言需求自动生成插件代码。
+    
+    REQUEST: 用自然语言描述你想要的插件功能。
+    
+    示例: uv run python cli.py skills build "帮我写一个Skill，在每次生成前注入一句主角很帅"
+    """
+    from core.novel_context import NovelContext
+    from core.plugin_manager import PluginManager
+    from core.agents.skill_builder_agent import SkillBuilderAgent
+    from utils.workspace import WorkspaceManager
+    from utils.config import NOVEL_DIR
+
+    workspace = WorkspaceManager(NOVEL_DIR)
+    context = NovelContext(workspace)
+    mgr = PluginManager(context)
+    mgr.scan_and_load()
+
+    agent = SkillBuilderAgent(context, mgr)
+    success = agent.build_skill(request)
+    if success:
+        click.echo(click.style("[✓] 插件已生成并热重载成功！", fg="green", bold=True))
+    else:
+        click.echo(click.style("[✗] 插件生成失败，请查看上方日志。", fg="red"))
 
 if __name__ == '__main__':
     try:

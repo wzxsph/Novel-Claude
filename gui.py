@@ -65,7 +65,7 @@ class NovelClaudeGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Novel-Claude 智能网文生成工作站 V2")
+        self.title("Novel-Claude V3 智能网文生成工作站")
         self.geometry("1300x850")
         self.minsize(1100, 700)
         ctk.set_appearance_mode("Dark")
@@ -90,10 +90,15 @@ class NovelClaudeGUI(ctk.CTk):
         # 初始化 V3 微内核插件系统
         self._init_v3_kernel()
 
+        # 启动日志轮询
+        self.after(80, self._poll_log_queue)
+
         print("═" * 60)
-        print("  🚀 Novel-Claude V3 引擎已启动")
+        print("  🚀 Novel-Claude V3 微内核引擎已启动")
         print(f"  📂 当前项目: {os.getenv('NOVEL_NAME', '默认')}")
         print(f"  🤖 当前模型: {os.getenv('MODEL_ID', 'glm-4.6v')}")
+        loaded_count = len(self.novel_context.active_skills) if hasattr(self, 'novel_context') else 0
+        print(f"  🔌 已加载插件: {loaded_count} 个")
         print("═" * 60)
 
     # ──────────────────────────────────
@@ -105,7 +110,7 @@ class NovelClaudeGUI(ctk.CTk):
 
         # Logo
         ctk.CTkLabel(sb, text="📖 Novel-Claude", font=ctk.CTkFont(size=22, weight="bold")).pack(padx=20, pady=(18, 4))
-        ctk.CTkLabel(sb, text="智能网文生成工作站 V2", font=ctk.CTkFont(size=11), text_color="gray60").pack(padx=20, pady=(0, 12))
+        ctk.CTkLabel(sb, text="V3 微内核 · 插件生态引擎", font=ctk.CTkFont(size=11), text_color="gray60").pack(padx=20, pady=(0, 12))
 
         # ── API 配置 ──
         self._sidebar_section(sb, "🔗 API 配置")
@@ -172,13 +177,12 @@ class NovelClaudeGUI(ctk.CTk):
         save_btn = ctk.CTkButton(sb, text="💾 保存全部配置", command=self._save_all_config, fg_color="#2563EB", hover_color="#1D4ED8", height=36)
         save_btn.pack(padx=20, pady=(0, 10), fill="x")
 
-        # ── V3 Agent & Plugin 实验区 ──
-        self._sidebar_section(sb, "🤖 V3 实验区")
-        ctk.CTkLabel(sb, text="指令 (Meta-Gen/Agent):", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20)
-        self.agent_intent_entry = ctk.CTkEntry(sb, width=240, placeholder_text="如: 帮我写一个打怪掉金币的 Skill")
-        self.agent_intent_entry.pack(padx=20, pady=(2, 8))
-        agent_btn = ctk.CTkButton(sb, text="✨ 召唤 SkillBuilder", command=self._run_skill_builder, fg_color="#F59E0B", hover_color="#D97706", height=32)
-        agent_btn.pack(padx=20, pady=(0, 4), fill="x")
+        # ── 插件快捷入口 ──
+        self._sidebar_section(sb, "🔌 插件快捷")
+        self.skill_status_label = ctk.CTkLabel(sb, text="已加载: 0 个插件", font=ctk.CTkFont(size=11), text_color="#60A5FA")
+        self.skill_status_label.pack(anchor="w", padx=20, pady=(0, 4))
+        reload_btn = ctk.CTkButton(sb, text="🔄 重载全部插件", command=self._reload_all_skills, fg_color="#9333EA", hover_color="#7E22CE", height=32)
+        reload_btn.pack(padx=20, pady=(0, 4), fill="x")
 
         # 主题切换
         theme_frame = ctk.CTkFrame(sb, fg_color="transparent")
@@ -194,11 +198,13 @@ class NovelClaudeGUI(ctk.CTk):
         self.tabview.grid(row=0, column=1, padx=(0, 16), pady=(10, 4), sticky="nsew")
 
         tab_wf = self.tabview.add("📝 工作流")
+        tab_skills = self.tabview.add("🔌 Skills 插件")
         tab_cfg = self.tabview.add("⚙️ 环境配置")
         tab_prompt = self.tabview.add("✏️ 提示词工程")
         tab_batch = self.tabview.add("📦 Batch 批量")
 
         self._build_tab_workflow(tab_wf)
+        self._build_tab_skills(tab_skills)
         self._build_tab_config(tab_cfg)
         self._build_tab_prompts(tab_prompt)
         self._build_tab_batch(tab_batch)
@@ -266,6 +272,121 @@ class NovelClaudeGUI(ctk.CTk):
         btn_reindex = ctk.CTkButton(row4, text="🔄 重建 RAG 记忆", height=34, fg_color="#9333EA", hover_color="#7E22CE", command=self._run_reindex)
         btn_reindex.pack(side="left")
         self._all_buttons.append(btn_reindex)
+
+    # ──────────────────────────────────
+    #  Skills 插件管理 Tab (V3 核心)
+    # ──────────────────────────────────
+    def _build_tab_skills(self, parent):
+        scroll = ctk.CTkScrollableFrame(parent)
+        scroll.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # ── 已加载的插件列表 ──
+        f_loaded = self._card(scroll, "📋 已加载的插件 (Skills)")
+        ctk.CTkLabel(f_loaded, text="以下插件已被 PluginManager 自动扫描并挂载到 EventBus:",
+                     font=ctk.CTkFont(size=11), text_color="gray60").pack(anchor="w", padx=12, pady=(4, 4))
+        self.skills_list_frame = ctk.CTkFrame(f_loaded, fg_color="transparent")
+        self.skills_list_frame.pack(fill="x", padx=12, pady=(0, 8))
+        self._refresh_skills_list()
+
+        btn_row = ctk.CTkFrame(f_loaded, fg_color="transparent")
+        btn_row.pack(fill="x", padx=12, pady=(0, 10))
+        ctk.CTkButton(btn_row, text="🔄 刷新列表", width=130, height=32, command=self._refresh_skills_list).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btn_row, text="♻️ 热重载全部插件", width=160, height=32, fg_color="#9333EA", hover_color="#7E22CE",
+                      command=self._reload_all_skills).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btn_row, text="📂 打开 skills 目录", width=150, height=32, fg_color="transparent", border_width=2,
+                      text_color=("gray10", "#DCE4EE"),
+                      command=lambda: os.startfile(os.path.abspath("skills"))).pack(side="left")
+
+        # ── 单个插件热重载 ──
+        f_single = self._card(scroll, "🔧 单个插件热重载")
+        ctk.CTkLabel(f_single, text="输入 skills/ 下的文件夹名进行单插件热更新:",
+                     font=ctk.CTkFont(size=11), text_color="gray60").pack(anchor="w", padx=12, pady=(4, 2))
+        row_single = ctk.CTkFrame(f_single, fg_color="transparent")
+        row_single.pack(fill="x", padx=12, pady=(0, 10))
+        self.single_skill_entry = ctk.CTkEntry(row_single, height=34, placeholder_text="如 core_memory_rag")
+        self.single_skill_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ctk.CTkButton(row_single, text="♻️ 热重载", height=34, fg_color="#F59E0B", hover_color="#D97706",
+                      command=self._hot_reload_single_skill).pack(side="right")
+
+        # ── SkillBuilder Agent (Meta-Generation) ──
+        f_builder = self._card(scroll, "🤖 SkillBuilder Agent (Meta-Generation)")
+        ctk.CTkLabel(f_builder, text="用自然语言描述你需要的插件功能，大模型会自动生成合法的 BaseSkill 子类代码并热重载:",
+                     font=ctk.CTkFont(size=11), text_color="gray60").pack(anchor="w", padx=12, pady=(4, 2))
+        self.agent_intent_entry = ctk.CTkTextbox(f_builder, height=80, font=ctk.CTkFont(family="Consolas", size=12))
+        self.agent_intent_entry.pack(fill="x", padx=12, pady=(4, 8))
+        self.agent_intent_entry.insert("0.0", "帮我写一个 Skill，在每次生成前自动注入一句 '主角很帅' 到 prompt 中")
+        agent_btn = ctk.CTkButton(f_builder, text="✨ 召唤 SkillBuilder Agent 生成插件",
+                                  command=self._run_skill_builder, fg_color="#F59E0B", hover_color="#D97706", height=36)
+        agent_btn.pack(anchor="e", padx=12, pady=(0, 10))
+        self._all_buttons.append(agent_btn)
+
+        # ── 开发指南卡片 ──
+        f_guide = self._card(scroll, "📚 手动开发指南")
+        guide_text = """要手动开发一个 V3 插件 (Skill)，请按以下步骤操作：
+
+1. 在 skills/ 目录下创建一个新文件夹，如 skills/my_awesome_skill/
+2. 在该文件夹内创建 skill.py 文件
+3. 编写一个继承 BaseSkill 的类，覆写你需要的生命周期钩子：
+   - on_init()：初始化资源
+   - on_before_scene_write()：在生成前注入上下文
+   - on_after_scene_write()：生成后执行清理/统计
+   - on_volume_planning()：拦截并修改分卷大纲
+   - get_llm_tools()：注册 LLM 可调用工具
+4. 保存后点击上方「♻️ 热重载全部插件」即可生效！
+
+也可以通过 CLI：uv run python cli.py skills list"""
+        guide_box = ctk.CTkTextbox(f_guide, height=180, font=ctk.CTkFont(family="Consolas", size=11))
+        guide_box.pack(fill="x", padx=12, pady=(4, 10))
+        guide_box.insert("0.0", guide_text)
+        guide_box.configure(state="disabled")
+
+    def _refresh_skills_list(self):
+        """刷新已加载插件的列表显示"""
+        for widget in self.skills_list_frame.winfo_children():
+            widget.destroy()
+
+        if not hasattr(self, 'novel_context') or not self.novel_context.active_skills:
+            ctk.CTkLabel(self.skills_list_frame, text="  (暂无已加载的插件)",
+                         font=ctk.CTkFont(size=11), text_color="gray50").pack(anchor="w")
+            if hasattr(self, 'skill_status_label'):
+                self.skill_status_label.configure(text="已加载: 0 个插件")
+            return
+
+        for name, skill in self.novel_context.active_skills.items():
+            row = ctk.CTkFrame(self.skills_list_frame, fg_color=("gray88", "gray20"), corner_radius=6)
+            row.pack(fill="x", pady=2)
+            ctk.CTkLabel(row, text=f"  🟢 {skill.name}", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=8, pady=6)
+            ctk.CTkLabel(row, text=f"({name}/)", font=ctk.CTkFont(size=10), text_color="gray50").pack(side="left")
+            ctk.CTkButton(row, text="♻️", width=30, height=26, fg_color="transparent", border_width=1,
+                          text_color=("gray10", "#DCE4EE"),
+                          command=lambda n=name: self._hot_reload_one(n)).pack(side="right", padx=6, pady=4)
+
+        count = len(self.novel_context.active_skills)
+        if hasattr(self, 'skill_status_label'):
+            self.skill_status_label.configure(text=f"已加载: {count} 个插件")
+
+    def _hot_reload_one(self, name):
+        self.plugin_manager.hot_reload(name)
+        self._refresh_skills_list()
+
+    def _hot_reload_single_skill(self):
+        name = self.single_skill_entry.get().strip()
+        if not name:
+            print("[WARN] 请输入插件文件夹名！")
+            return
+        self.plugin_manager.hot_reload(name)
+        self._refresh_skills_list()
+
+    def _reload_all_skills(self):
+        print("[INFO] 正在重载全部插件...")
+        from core.event_bus import event_bus
+        for skill in list(self.novel_context.active_skills.values()):
+            event_bus.unregister(skill)
+        self.novel_context.active_skills.clear()
+        self.plugin_manager.loaded_modules.clear()
+        self.plugin_manager.scan_and_load()
+        self._refresh_skills_list()
+        print("[✓] 全部插件已重载！")
 
     def _build_tab_config(self, parent):
         """环境配置总览（只读预览模式）"""
@@ -463,6 +584,9 @@ class NovelClaudeGUI(ctk.CTk):
         self.novel_context = NovelContext(self.workspace_mgr)
         self.plugin_manager = PluginManager(self.novel_context)
         self.plugin_manager.scan_and_load()
+        # 刷新 UI 上的插件列表
+        if hasattr(self, 'skills_list_frame'):
+            self._refresh_skills_list()
 
     def _save_single_prompt(self, env_key):
         box = self.prompt_boxes[env_key]
@@ -522,7 +646,7 @@ class NovelClaudeGUI(ctk.CTk):
         threading.Thread(target=wrapper, daemon=True).start()
 
     def _run_skill_builder(self):
-        intent = self.agent_intent_entry.get().strip()
+        intent = self.agent_intent_entry.get("0.0", "end").strip()
         if not intent:
             print("[WARN] 请先输入开发需求！")
             return
@@ -531,6 +655,7 @@ class NovelClaudeGUI(ctk.CTk):
             from core.agents.skill_builder_agent import SkillBuilderAgent
             agent = SkillBuilderAgent(self.novel_context, self.plugin_manager)
             agent.build_skill(intent)
+            self._refresh_skills_list()
             
         self._run_in_thread("Meta-Generation", builder_task)
 
@@ -586,7 +711,7 @@ class NovelClaudeGUI(ctk.CTk):
             return
 
         def reindex_task():
-            from s04_memory_rag import post_generation_hook
+            from core.event_bus import event_bus
             from utils.config import MANUSCRIPTS_DIR
             for chap in range(start, end + 1):
                 path = os.path.join(MANUSCRIPTS_DIR, f"vol_{int(vol):02d}", f"ch_{chap:03d}_final.md")
@@ -594,7 +719,8 @@ class NovelClaudeGUI(ctk.CTk):
                     with open(path, "r", encoding="utf-8") as f:
                         content = f.read()
                     print(f"[REINDEX] 正在补全第 {chap} 章的记忆...")
-                    post_generation_hook(chap, content)
+                    beat_mock = {"chapter_id": chap, "beats": []}
+                    event_bus.emit("on_after_scene_write", beat_mock, content)
                 else:
                     print(f"[WARN] 找不到成稿文件: {path}")
 
