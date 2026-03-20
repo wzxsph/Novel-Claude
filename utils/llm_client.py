@@ -91,13 +91,20 @@ def extract_entities(prompt: str) -> list[str]:
         {"role": "user", "content": f"提取以下网文大纲中的核心实体：\n{prompt}"}
     ]
     
-    response = client.chat.completions.create(
-        model=FLASH_MODEL_ID,
-        messages=messages,
-        temperature=0.1
-    )
+    try:
+        response = client.chat.completions.create(
+            model=FLASH_MODEL_ID,
+            messages=messages,
+            temperature=0.1
+        )
+        content = response.choices[0].message.content.strip()
+    except Exception as e:
+        # User feedback: Safe handling of content filters (Error 1301)
+        if "1301" in str(e):
+            return [] # Safely skip if content filter triggers
+        print(f"[WARN] 实体提取失败: {e}")
+        return []
     
-    content = response.choices[0].message.content.strip()
     # Clean possible markdown format
     if content.startswith("```json"):
         content = content[7:]

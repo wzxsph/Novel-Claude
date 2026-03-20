@@ -94,6 +94,13 @@ uv run python cli.py write --volume 1 --chapters 1-5
 ```
 生成的成品 Markdown 文件将存放在 `出版级成稿目录/` (或 `.novel/manuscripts/`)。
 
+### 特殊阶段：手动重补记忆 (Reindex)
+如果因为 API 报错或网络中断导致某几章的记忆没有存入向量库：
+```bash
+# 手动将第 1 卷第 5 章的内容重补进 RAG 记忆中
+uv run python cli.py reindex --volume 1 --chapters 5
+```
+
 ---
 
 ## 项目目录结构

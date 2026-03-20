@@ -42,6 +42,33 @@ def write(volume, chapters):
     # Ensure memory embedding threads complete successfully without being terminated brutally
     wait_for_background_tasks()
 
+@cli.command()
+@click.option('--volume', type=int, required=True, help='目标卷号')
+@click.option('--chapters', type=str, required=True, help='要重新补齐记忆的章节范围 (如 1-5)')
+def reindex(volume, chapters):
+    """【补救措施】手动将已生成的成稿重新导入向量记忆库"""
+    from s03_scene_writer import run_scene_writer
+    from s04_memory_rag import post_generation_hook
+    from utils.config import MANUSCRIPTS_DIR
+    import os
+    
+    if '-' in chapters:
+        start, end = map(int, chapters.split('-'))
+    else:
+        start = end = int(chapters)
+        
+    for chap in range(start, end + 1):
+        path = os.path.join(MANUSCRIPTS_DIR, f"vol_{volume:02d}", f"ch_{chap:03d}_final.md")
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+                print(f"[REINDEX] 正在补全第 {chap} 章的记忆...")
+                post_generation_hook(chap, content)
+        else:
+            print(f"[WARN] 找不到成稿文件: {path}")
+            
+    wait_for_background_tasks()
+
 if __name__ == '__main__':
     try:
         cli()

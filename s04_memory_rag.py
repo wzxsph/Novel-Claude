@@ -104,29 +104,32 @@ def _background_update_task(chapter_id: int, final_content: str):
     except:
         print(f"  [Background Task] 正在将第 {chapter_id} 章内容向量化并入库...")
         
-    chunks = chunk_text(final_content)
-    
-    ids = []
-    documents = []
-    metadatas = []
-    
-    for i, chunk in enumerate(chunks):
-        chunk_entities = extract_entities(chunk)
-        if chunk_entities:
-            involved = ",".join(chunk_entities)
+    try:
+        chunks = chunk_text(final_content)
+        
+        ids = []
+        documents = []
+        metadatas = []
+        
+        for i, chunk in enumerate(chunks):
+            chunk_entities = extract_entities(chunk)
+            # Even if no entities are extracted, we should store the chunk for semantic search
+            involved = ",".join(chunk_entities) if chunk_entities else ""
             documents.append(chunk)
             ids.append(f"ch_{chapter_id}_chunk_{i}")
             metadatas.append({
                 "chapter_id": chapter_id,
                 "involved_entities": involved
             })
-            
-    if documents:
-        collection.add(
-            ids=ids,
-            documents=documents,
-            metadatas=metadatas
-        )
+                
+        if documents:
+            collection.add(
+                ids=ids,
+                documents=documents,
+                metadatas=metadatas
+            )
+    except Exception as e:
+        print(f"[WARN] 后台向量化任务失败 (Ch_{chapter_id}): {e}")
 
 def post_generation_hook(chapter_id: int, final_content: str):
     """
