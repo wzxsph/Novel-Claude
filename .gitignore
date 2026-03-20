@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Novel-Claude Data (Contain your local world settings, drafts and vector DB)
+.novel/
+reference/
+manuscripts/
+出版级成稿目录/
+implementation_plan.md
+task.md
+
+# Environment and Secrets
+env
+.env
+error_log.txt
+
+# OS
+.DS_Store
+Thumbs.db
