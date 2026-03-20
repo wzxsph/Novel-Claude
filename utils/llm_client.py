@@ -104,10 +104,16 @@ def generate_stream(prompt, system_message: str = "你是一个顶尖的网络�
         for idx, call in tool_calls_data.items():
             try:
                 args = json.loads(call["arguments"])
-                print(f"\\n[⚙️ Model Calling Tool] {call['name']} -> {args}")
+                try:
+                    print(f"\n[⚙️ Model Calling Tool] {call['name']} -> {args}")
+                except UnicodeEncodeError:
+                    print(f"\n[Model Calling Tool] {call['name']} -> {args}".encode('gbk', 'replace').decode('gbk'))
                 event_bus.emit("execute_tool", call["name"], args)
             except Exception as e:
-                print(f"\\n[🚨 Tool Error] 解析或执行工具 {call['name']} 失败: {e}")
+                try:
+                    print(f"\n[🚨 Tool Error] 解析或执行工具 {call['name']} 失败: {e}")
+                except UnicodeEncodeError:
+                    print(f"\n[Tool Error] 解析或执行工具 {call['name']} 失败: {e}".encode('gbk', 'replace').decode('gbk'))
                 
     return "".join(collected_messages)
 

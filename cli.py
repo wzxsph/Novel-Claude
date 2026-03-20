@@ -199,21 +199,76 @@ def skills_list():
     mgr.scan_and_load()
 
     if context.active_skills:
-        click.echo(click.style(f"\n🔌 已加载 {len(context.active_skills)} 个插件:", fg="green", bold=True))
+        click.echo(click.style(f"\n🔌 已加载 {len(context.active_skills)} 个动态插件:", fg="green", bold=True))
         for name, skill in context.active_skills.items():
             click.echo(f"  🟢 {skill.name}  (skills/{name}/skill.py)")
     else:
-        click.echo(click.style("\n(暂无已加载的插件)", fg="yellow"))
+        click.echo(click.style("\n🔌 (暂无已加载的动态插件)", fg="yellow"))
 
     # 列出 skills/ 中的其他文件夹
     skills_dir = "skills"
     if os.path.exists(skills_dir):
-        all_dirs = [d for d in os.listdir(skills_dir) if os.path.isdir(os.path.join(skills_dir, d))]
+        all_dirs = [d for d in os.listdir(skills_dir) if os.path.isdir(os.path.join(skills_dir, d)) and not d.startswith("__") and not d.startswith(".")]
         unloaded = [d for d in all_dirs if d not in context.active_skills]
-        if unloaded:
+        
+        disabled = []
+        errors = []
+        
+        for d in unloaded:
+            if os.path.exists(os.path.join(skills_dir, d, ".disabled")):
+                disabled.append(d)
+            else:
+                errors.append(d)
+                
+        if disabled:
+            click.echo(click.style(f"\n⏸️ 以下插件已被禁用:", fg="blue"))
+            for d in disabled:
+                click.echo(f"  🔴 skills/{d}/")
+                
+        if errors:
             click.echo(click.style(f"\n⚠️ 以下目录未成功加载 (可能缺少 skill.py 或有报错):", fg="yellow"))
-            for d in unloaded:
+            for d in errors:
                 click.echo(f"  ⚪ skills/{d}/")
+
+@skills.command("enable")
+@click.argument("name")
+def skills_enable(name):
+    """启用指定的插件。
+
+    NAME: skills/ 目录下的文件夹名 (如 ext_gold_finger)。
+    """
+    from core.novel_context import NovelContext
+    from core.plugin_manager import PluginManager
+    from utils.workspace import WorkspaceManager
+    from utils.config import NOVEL_DIR
+
+    workspace = WorkspaceManager(NOVEL_DIR)
+    context = NovelContext(workspace)
+    mgr = PluginManager(context)
+    
+    click.echo(f"[INFO] 正在启用插件: {name}...")
+    mgr.enable_skill(name)
+    click.echo(click.style(f"[✓] 插件 {name} 已启用。请重载/重启依赖项以生效。", fg="green"))
+
+@skills.command("disable")
+@click.argument("name")
+def skills_disable(name):
+    """禁用指定的插件。
+
+    NAME: skills/ 目录下的文件夹名 (如 ext_gold_finger)。
+    """
+    from core.novel_context import NovelContext
+    from core.plugin_manager import PluginManager
+    from utils.workspace import WorkspaceManager
+    from utils.config import NOVEL_DIR
+
+    workspace = WorkspaceManager(NOVEL_DIR)
+    context = NovelContext(workspace)
+    mgr = PluginManager(context)
+    
+    click.echo(f"[INFO] 正在禁用插件: {name}...")
+    mgr.disable_skill(name)
+    click.echo(click.style(f"[✓] 插件 {name} 已被禁用。请重载/重启依赖项以彻底卸载。", fg="yellow"))
 
 @skills.command("reload")
 @click.argument("name", required=False, default=None)

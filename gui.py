@@ -345,25 +345,60 @@ class NovelClaudeGUI(ctk.CTk):
         for widget in self.skills_list_frame.winfo_children():
             widget.destroy()
 
-        if not hasattr(self, 'novel_context') or not self.novel_context.active_skills:
-            ctk.CTkLabel(self.skills_list_frame, text="  (暂无已加载的插件)",
+        skills_dir = "skills"
+        all_dirs = []
+        if os.path.exists(skills_dir):
+            all_dirs = [d for d in os.listdir(skills_dir) if os.path.isdir(os.path.join(skills_dir, d)) and not d.startswith("__") and not d.startswith(".")]
+
+        active_skills = getattr(self, 'novel_context', None) and self.novel_context.active_skills or {}
+
+        if not all_dirs and not active_skills:
+            ctk.CTkLabel(self.skills_list_frame, text="  (暂无发现的插件)",
                          font=ctk.CTkFont(size=11), text_color="gray50").pack(anchor="w")
             if hasattr(self, 'skill_status_label'):
                 self.skill_status_label.configure(text="已加载: 0 个插件")
             return
 
-        for name, skill in self.novel_context.active_skills.items():
+        loaded_count = 0
+        for name in all_dirs:
+            is_active = name in active_skills
+            is_disabled = os.path.exists(os.path.join(skills_dir, name, ".disabled"))
+            
             row = ctk.CTkFrame(self.skills_list_frame, fg_color=("gray88", "gray20"), corner_radius=6)
             row.pack(fill="x", pady=2)
-            ctk.CTkLabel(row, text=f"  🟢 {skill.name}", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=8, pady=6)
-            ctk.CTkLabel(row, text=f"({name}/)", font=ctk.CTkFont(size=10), text_color="gray50").pack(side="left")
-            ctk.CTkButton(row, text="♻️", width=30, height=26, fg_color="transparent", border_width=1,
-                          text_color=("gray10", "#DCE4EE"),
-                          command=lambda n=name: self._hot_reload_one(n)).pack(side="right", padx=6, pady=4)
+            
+            if is_disabled:
+                ctk.CTkLabel(row, text=f"  🔴 {name}", font=ctk.CTkFont(size=12, weight="bold"), text_color="gray50").pack(side="left", padx=8, pady=6)
+                ctk.CTkButton(row, text="启用", width=50, height=26, fg_color="#10B981", hover_color="#059669",
+                              command=lambda n=name: self._toggle_skill(n, True)).pack(side="right", padx=6, pady=4)
+            elif is_active:
+                skill = active_skills[name]
+                loaded_count += 1
+                ctk.CTkLabel(row, text=f"  🟢 {skill.name}", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", padx=8, pady=6)
+                ctk.CTkLabel(row, text=f"({name}/)", font=ctk.CTkFont(size=10), text_color="gray50").pack(side="left")
+                ctk.CTkButton(row, text="禁用", width=50, height=26, fg_color="#EF4444", hover_color="#DC2626",
+                              command=lambda n=name: self._toggle_skill(n, False)).pack(side="right", padx=6, pady=4)
+                ctk.CTkButton(row, text="♻️", width=30, height=26, fg_color="transparent", border_width=1,
+                              text_color=("gray10", "#DCE4EE"),
+                              command=lambda n=name: self._hot_reload_one(n)).pack(side="right", padx=6, pady=4)
+            else:
+                ctk.CTkLabel(row, text=f"  ⚠️ {name} (报错)", font=ctk.CTkFont(size=12, weight="bold"), text_color="#F59E0B").pack(side="left", padx=8, pady=6)
+                ctk.CTkButton(row, text="禁用", width=50, height=26, fg_color="#EF4444", hover_color="#DC2626",
+                              command=lambda n=name: self._toggle_skill(n, False)).pack(side="right", padx=6, pady=4)
+                ctk.CTkButton(row, text="♻️", width=30, height=26, fg_color="transparent", border_width=1,
+                              text_color=("gray10", "#DCE4EE"),
+                              command=lambda n=name: self._hot_reload_one(n)).pack(side="right", padx=6, pady=4)
 
-        count = len(self.novel_context.active_skills)
         if hasattr(self, 'skill_status_label'):
-            self.skill_status_label.configure(text=f"已加载: {count} 个插件")
+            self.skill_status_label.configure(text=f"已加载: {loaded_count} 个插件")
+
+    def _toggle_skill(self, name, enable):
+        print(f"[UI] {'启用' if enable else '禁用'}插件: {name}")
+        if enable:
+            self.plugin_manager.enable_skill(name)
+        else:
+            self.plugin_manager.disable_skill(name)
+        self._refresh_skills_list()
 
     def _hot_reload_one(self, name):
         self.plugin_manager.hot_reload(name)

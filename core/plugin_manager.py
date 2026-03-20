@@ -25,10 +25,12 @@ class PluginManager:
         print(f"[PluginManager] 正在扫描 {self.skills_dir} 目录下的插件...")
         for item in os.listdir(self.skills_dir):
             plugin_path = os.path.join(self.skills_dir, item)
-            if os.path.isdir(plugin_path):
+            if os.path.isdir(plugin_path) and not item.startswith("__") and not item.startswith("."):
                 skill_file = os.path.join(plugin_path, "skill.py")
+                disabled_file = os.path.join(plugin_path, ".disabled")
                 if os.path.exists(skill_file):
-                    self._load_skill(item, skill_file)
+                    if not os.path.exists(disabled_file):
+                        self._load_skill(item, skill_file)
 
     def _load_skill(self, module_name: str, file_path: str):
         """通过绝对路径动态导入 Python 模块"""
@@ -66,7 +68,10 @@ class PluginManager:
                 print(f"  [WARN] 在 {file_path} 中未找到继承自 BaseSkill 的有效类。")
 
         except Exception as e:
-            print(f"  [🚨] 加载插件模块 {module_name} 崩溃: {e}")
+            try:
+                print(f"  [🚨] 加载插件模块 {module_name} 崩溃: {e}")
+            except UnicodeEncodeError:
+                print(f"  [ERROR] 加载插件模块 {module_name} 崩溃: {e}".encode('gbk', 'replace').decode('gbk'))
 
     def hot_reload(self, module_name: str):
         """
@@ -88,8 +93,33 @@ class PluginManager:
 
         # 2. 重新加载
         file_path = os.path.join(self.skills_dir, module_name, "skill.py")
+        disabled_path = os.path.join(self.skills_dir, module_name, ".disabled")
         if os.path.exists(file_path):
-            self._load_skill(module_name, file_path)
-            print(f"[PluginManager] {module_name} 热更新完毕！")
+            if not os.path.exists(disabled_path):
+                self._load_skill(module_name, file_path)
+                print(f"[PluginManager] {module_name} 热更新完毕！")
+            else:
+                print(f"[PluginManager] {module_name} 已处于禁用状态，已卸载。")
         else:
             print(f"[ERROR] 找不到此插件文件: {file_path}")
+
+    def disable_skill(self, module_name: str):
+        """禁用一个插件"""
+        plugin_path = os.path.join(self.skills_dir, module_name)
+        if os.path.exists(plugin_path):
+            with open(os.path.join(plugin_path, ".disabled"), "w", encoding="utf-8") as f:
+                f.write("disabled")
+            self.hot_reload(module_name)
+        else:
+            print(f"[ERROR] 找不到插件目录: {plugin_path}")
+
+    def enable_skill(self, module_name: str):
+        """启用一个插件"""
+        plugin_path = os.path.join(self.skills_dir, module_name)
+        disabled_path = os.path.join(plugin_path, ".disabled")
+        if os.path.exists(disabled_path):
+            os.remove(disabled_path)
+        if os.path.exists(plugin_path):
+            self.hot_reload(module_name)
+        else:
+            print(f"[ERROR] 找不到插件目录: {plugin_path}")
