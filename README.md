@@ -7,11 +7,12 @@
 ## 核心特质
 
 - **Agent 是打字机，Harness 是编辑部**：模型仅负责局部生成，外围 Python 脚本负责控制逻辑、校验数据和管理上下文。
-- **上下文物理隔离 (Context Isolation)**：每个场景（Scene）的生成都在一个完全独立的子进程中完成，写完即销毁，从物理层面杜绝上下文污染。
-- **状态绝对持久化 (State Persistence)**：所有世界观、人物卡、分卷大纲均为强类型 JSON 文件，不依赖进程内存储。
-- **动态记忆 RAG (Memory Bus)**：利用 ChromaDB 向量数据库，按需倒序检索实体最新状态（如伤势、位置、法宝状态），实现精准的剧情连贯性。
-- **Batch API 批量生成 (New!)**：原生支持智谱大模型批量任务模式，成本直接减半，可一次性提交 50 章甚至全本文本生成渲染。
-- **防崩溃内容过滤**：内置 `1301` 敏感内容过滤器处理机制，遇到因尺度触碰审查的片段可自动捕获异常并跳过，保证无人值守长线运行。
+- **上下文物理隔离 (Context Isolation)**：每个场景（Scene）的生成都在一个完全独立的子进程中完成，从物理层面杜绝上下文污染。
+- **多项目隔离 (Multi-Project Support)**：支持通过 `NOVEL_NAME` 环境变量动态切换创作空间，互不干扰。
+- **动态记忆 RAG (Rule-based Memory Bus)**：利用 Aho-Corasick 自动机进行毫秒级实体提取，并结合 ChromaDB 检索倒序状态，实现精准剧情连贯。
+- **断点续传 (Checkpointing)**：每段场景生成后均实时落盘。如果任务中断，重启后会自动跳过（Skip）已完成部分，节省 API 资费。
+- **Batch API 批量生成 (Cost Reduction)**：原生支持 Batch 模式，Token 成本减半，极速吞吐。
+- **Editor Agent (Polish Layer)**：内置独立主编智能体，自动抹除场景切割痕迹，确保视角统一与逻辑连贯。
 
 ---
 
@@ -20,16 +21,17 @@
 ### 整体架构设计
 ```
 novel_claude/
-├── cli.py                  # 命令行入口（用户唯一交互点）
+├── cli.py                  # 命令行入口（增强型 Help 提示）
 ├── s01_world_builder.py    # 阶段1：世界观设定引擎
-├── s02_volume_planner.py   # 阶段2：分卷与章节打点
-├── s03_scene_writer.py     # 阶段3：执笔集群（支持同步流式与 Batch 批量）
-├── s04_memory_rag.py       # 横切面：动态记忆总线（AOP 风格）
+├── s02_volume_planner.py   # 阶段2：分卷规划（内含精确字数归一化算法）
+├── s03_scene_writer.py     # 阶段3：执笔集群（含 Editor Agent & Checkpointing）
+├── s04_memory_rag.py       # 横切面：记忆总线（基于 Aho-Corasick 毫秒级提取）
 ├── utils/
-│   ├── batch_client.py     # 批量任务封装（提交任务、轮询同步）
-│   ├── config.py           # 环境配置 & 全局路径 & 后台守护线程管理
-│   └── llm_client.py       # LLM 调用封装（含安全异常处理）
-└── .novel/                 # 运行时数据中心（存储 JSON、MD、ChromaDB 和离线工单）
+│   ├── workspace.py        # [NEW] 线程安全工作区管理 (WorkspaceManager)
+│   ├── batch_client.py     # 批量任务封装（提交、轮询、同步）
+│   ├── config.py           # 核心配置（含多项目切换逻辑）
+│   └── llm_client.py       # LLM 封装（增加 1301 防崩拦截）
+└── .novel_{name}/          # 物理隔离的数据中心（自动按项目名创建）
 ```
 
 ### 模块详解
@@ -64,8 +66,12 @@ uv pip install -r requirements.txt
 ```env
 ANTHROPIC_API_KEY=你的智谱AI_API_KEY
 ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic
-MODEL_ID=glm-4  # 推荐使用 glm-4（Batch 模式默认基于可用模型提供50%折扣）
+MODEL_ID=glm-4-plus  # 推荐模型
+NOVEL_NAME=my_first_novel  # [可选] 指定当前项目名称，用于多项目物理隔离
 ```
+
+### 3. (进阶) 多项目管理
+如果你想同时写多本小说，只需在 `env` 中修改 `NOVEL_NAME` 的值。系统会自动将所有数据存入对应的隔离目录（例如 `.novel_my_first_novel`），确保世界观、记忆库和稿件互不干扰。
 
 > [!IMPORTANT]
 > **关于计费**：本项目除了使用对话模型，还会调用 `embedding-3` 向量接口。请确保你的智谱账户中 **“向量模型”** 额度充足。
