@@ -1,156 +1,87 @@
-# 📖 Novel-Claude: 网文版简易 Claude Code
+# 🚀 Novel-Claude V3: Agentic Novel Generation Framework
 
-**Novel-Claude** 是一个基于 Agentic 工作流的 AI 长篇小说创作系统。它参考了 *Claude Code* 的工程化思路，通过上下文物理隔离、状态持久化和动态 RAG 记忆总线，彻底解决了大模型在创作百万字长文时的“复读机”、“吃书”和“逻辑崩溃”问题。
+Novel-Claude 是一个基于大语言模型（如智谱 GLM-4）构建的全自动长篇小说生成管线。在 V3 版本中，它从传统的线性脚本流水线彻底进化为具有极高扩展性的 **微内核 + 插件生态架构 (Microkernel & Plugin Architecture)**。
+
+通过底层的 `EventBus` 事件引擎与动态 `PluginManager`，它支持极其复杂的社区插件生态（Skills）以及基于 ReAct 多轮交互的复杂智能体（Agents）。
+
+## ✨ 核心特性
+
+- **微内核插件系统 (Microkernel & Plugin Ecosystem)**: 所有的附加功能（如动态检索记忆 RAG、战斗合理性检测等）被剥离为主时间线之外的插件（Skills）。支持热重载（Hot-Reload）与错误护航隔离，单个插件崩溃不影响数小时的生成进程。
+- **复杂智能体支撑 (Complex Agents)**:
+  - 🖋️ **Editor Agent (毒舌主编智能体)**: 在章节生成末尾挂载，启用 ReAct 多轮循环思考对草稿进行严格审稿，自动修复视角跳跃和上下文割裂。
+  - 🤖 **Skill Builder Agent (元生成器)**: 系统级别的 Meta-Generation。在 GUI 中输入一行自然语言，系统将**自动撰写并编译合法外挂插件 (Skills)** 落盘生效。
+- **多端全覆盖 (GUI & CLI)**: 拥有基于 `customtkinter` 极其美观和现代化的桌面控制台，包含工作流、配置面板、Prompt 自定义、批量生成监控，并附带直接对接 `EventBus` 的内部终端模块。
+- **降本提效 (Batch API)**: 原生支持智谱/OpenAI 格式的 Batch API 提交流水线，支持离线 5 折并发生成海量章节，并自动拼接、回调。
 
 ---
 
-## 核心特质
+## 🏗️ 架构总览
 
-- **Agent 是打字机，Harness 是编辑部**：模型仅负责局部生成，外围 Python 脚本负责控制逻辑、校验数据和管理上下文。
-- **上下文物理隔离 (Context Isolation)**：每个场景（Scene）的生成都在一个完全独立的子进程中完成，从物理层面杜绝上下文污染。
-- **多项目隔离 (Multi-Project Support)**：支持通过 `NOVEL_NAME` 环境变量动态切换创作空间，互不干扰。
-- **动态记忆 RAG (Rule-based Memory Bus)**：利用 Aho-Corasick 自动机进行毫秒级实体提取，并结合 ChromaDB 检索倒序状态，实现精准剧情连贯。
-- **断点续传 (Checkpointing)**：每段场景生成后均实时落盘。如果任务中断，重启后会自动跳过（Skip）已完成部分，节省 API 资费。
-- **Batch API 批量生成 (Cost Reduction)**：原生支持 Batch 模式，Token 成本减半，极速吞吐。
-- **Editor Agent (Polish Layer)**：内置独立主编智能体，自动抹除场景切割痕迹，确保视角统一与逻辑连贯。
+整个生成管线被切分为三大核心引擎，引擎之间通过 `NovelContext` 共享白板及 `EventBus` 广播串行：
 
----
+1. `world_builder.py` (世界观造物主): 根据一句话创意（Logline），构建严格 JSON 格式的背景设定、阵营、人物列表。
+2. `volume_planner.py` (分卷派单员): 定制 10 卷纲要，并将大段卷纲拆解为精准到场景的小说打点（Beats），且通过算法强制归一化控制为每章 5000 字精确产出。
+3. `scene_writer.py` (执笔车间): 孵化 Subagents 无死角执行场景任务，并交由 Director Agent 进行定稿。
 
-## 核心架构 (Harnesses)
-
-### 整体架构设计
-```
+```text
 novel_claude/
-├── cli.py                  # 命令行入口（增强型 Help 提示）
-├── s01_world_builder.py    # 阶段1：世界观设定引擎
-├── s02_volume_planner.py   # 阶段2：分卷规划（内含精确字数归一化算法）
-├── s03_scene_writer.py     # 阶段3：执笔集群（含 Editor Agent & Checkpointing）
-├── s04_memory_rag.py       # 横切面：记忆总线（基于 Aho-Corasick 毫秒级提取）
-├── utils/
-│   ├── workspace.py        # [NEW] 线程安全工作区管理 (WorkspaceManager)
-│   ├── batch_client.py     # 批量任务封装（提交、轮询、同步）
-│   ├── config.py           # 核心配置（含多项目切换逻辑）
-│   └── llm_client.py       # LLM 封装（增加 1301 防崩拦截）
-└── .novel_{name}/          # 物理隔离的数据中心（自动按项目名创建）
+├── core/                       # 发动机微内核
+│   ├── event_bus.py            # 全局事件总线（Fault Tolerance）
+│   ├── plugin_manager.py       # 动态插件扫描与加载器
+│   ├── base_skill.py           # V3 标准化插件基类
+│   ├── novel_context.py        # 共享生命周期上下文
+│   └── agents/                 # 复杂推理智能体
+├── skills/                     # 插件挂载文件夹
+│   └── core_memory_rag/        # 原生的 RAG 记忆流媒体检索引擎
+├── world_builder.py            # 核心引擎一：设定构建
+├── volume_planner.py           # 核心引擎二：分卷与场景切分
+├── scene_writer.py             # 核心引擎三：片段执笔与合并
+├── cli.py                      # 终端入口
+├── gui.py                      # 桌面化入口
+└── utils/                      # 配置文件与 LLM 客户端 API 层
 ```
-
-### 模块详解
-
-- **s01_world_builder.py (全局设定引擎)**：利用 Pydantic Schema 强制 LLM 生成结构化 JSON。包含势力、等级、人物、规则四类清单。
-- **s02_volume_planner.py (规划引擎)**：实现多级拆解。先定 10 卷大纲，再细化具体章节的 Scene Beats。
-- **s03_scene_writer.py (执笔集群)**：采用 **Director-Worker 模式**。Director 划分任务，Subagent 在“无菌舱”中独立生成正文，最后由 Director 润色合并。
-- **s04_memory_rag.py (动态记忆总线)**：
-    - **前置注入 (Pre-Hook)**：提取实体，从 ChromaDB 检索最近章节的状态（倒序检索），注入 XML 背景。
-    - **后置刷新 (Post-Hook)**：正文生成后，进行语义分块 (Chunking) 并异步入库。
-- **utils/llm_client.py**：封装了针对不同场景的调用模式（`generate_json` / `generate_stream` / `extract_entities`）。
-- **utils/config.py**：管理 API Key、目录结构，并提供 `wait_for_background_tasks()` 机制确保进程退出前后台写入任务已完成。
 
 ---
 
-## 快速开始
+## 🛠️ 安装与使用
 
 ### 1. 环境准备
-
-推荐使用 [uv](https://github.com/astral-sh/uv) 快速部署环境：
-
+确保您的 Python >= 3.10。
 ```bash
-# 创建虚拟环境并安装依赖
-uv venv
+# 激活环境后安装依赖
 uv pip install -r requirements.txt
 ```
 
-### 2. 配置 API Key
-
-在项目根目录下创建 `env` 文件（注意：无后缀名），内容如下：
-
-```env
-ANTHROPIC_API_KEY=你的智谱AI_API_KEY
-ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic
-MODEL_ID=glm-4-plus  # 推荐模型
-NOVEL_NAME=my_first_novel  # [可选] 指定当前项目名称，用于多项目物理隔离
-```
-
-### 3. (进阶) 多项目管理
-如果你想同时写多本小说，只需在 `env` 中修改 `NOVEL_NAME` 的值。系统会自动将所有数据存入对应的隔离目录（例如 `.novel_my_first_novel`），确保世界观、记忆库和稿件互不干扰。
-
-> [!IMPORTANT]
-> **关于计费**：本项目除了使用对话模型，还会调用 `embedding-3` 向量接口。请确保你的智谱账户中 **“向量模型”** 额度充足。
-
----
-
-## 使用指南 (CLI)
-
-系统通过极简的命令行接口进行交互：
-
-### 阶段 1：初始化世界观
+### 2. 图形界面启动 (推荐)
+直接运行并进入现代化桌面端：
 ```bash
-uv run python cli.py init "一个赛博朋克与修仙结合的世界，主角通过植入义体获取灵根"
+uv run gui.py
 ```
-完成后请检查 `.novel/settings/` 下生成的 JSON 和 `world_manual.md`。
+*在 GUI 中，您可以左侧滑块处配置 API Key（如 `ANTHROPIC_API_KEY` 使用智谱或其他兼容 OpenAI 格式的密钥）、当前书籍名称、生成字数要求等。*
 
-### 阶段 2：生成分卷与微观细纲
+### 3. CLI 快速使用 (Terminal)
+
+如果你喜欢专注黑框终端码字：
 ```bash
-# 生成 10 卷宏观大纲
+# 阶段 1：一句话初始化世界观
+uv run python cli.py init "一个在修真界利用赛博插件强开灵根的科幻转玄幻故事"
+
+# 阶段 2：规划宏观 10 卷的主线大纲
 uv run python cli.py plan
-# 针对第 1 卷生成具体章节的剧情打点 (Beats)
+
+# 阶段 3：明确为第 1 卷出具细分到微观单元的 50 章 Scene Beats
 uv run python cli.py plan --volume 1
-```
 
-### 阶段 3：启动自动化写作
-
-#### 模式 A：实时流式生成（适合短篇生成或单章调试，带终端动态渲染）
-```bash
-# 自动生成第 1 卷的 1 到 5 章
+# 阶段 4：召唤执笔集群实时码字生成第 1 卷 1 到 5 章
 uv run python cli.py write --volume 1 --chapters 1-5
 ```
 
-#### 模式 B：大规模批量生成（生产级推荐：半价折扣、极高吞吐量）
-```bash
-# 1. 构建离线工单库文件 (.jsonl)
-uv run python cli.py batch-build --volume 1 --chapters 1-50
-
-# 2. 将包含上百个场景请求的工单推送到智谱云端
-uv run python cli.py batch-submit .novel/batch_jobs/vol_01_ch_1_50_req.jsonl
-# (命令会输出 Batch ID，例如 batch_xxx，请妥善保存)
-
-# 3. 轮询并同步结果（可放在服务器后台挂机）
-# 任务结束后，它会自动下载云端排版好的分段内容，按序组装成章节，并保存到成稿目录
-uv run python cli.py batch-sync <刚才返回的_batch_id>
-```
-
-### 特殊阶段：手动重补记忆 (Reindex)
-如果因为 API 报错或网络中断导致某几章的记忆没有存入向量库：
-```bash
-# 手动将第 1 卷第 5 章的内容重补进 RAG 记忆中
-uv run python cli.py reindex --volume 1 --chapters 5
-```
-
 ---
 
-## 项目目录结构
+## 🔌 V3 插件与外挂生态
 
-```text
-/My_Novel_Project
-├── .novel/                     # 核心隐藏控制域（数据中心）
-│   ├── settings/               # 全局设定库 (JSON & MD)
-│   ├── volumes/                # 分卷规划与章节 Beats
-│   ├── manuscripts/            # 正文草稿与成稿区
-│   └── memory/                 # ChromaDB 向量数据库
-├── utils/                      # 工具类（LLM 客户端、配置管理等）
-├── s01_world_builder.py        # 设定引擎
-├── s02_volume_planner.py       # 规划引擎
-├── s03_scene_writer.py         # 写作引擎
-├── s04_memory_rag.py           # 记忆总线
-├── cli.py                      # 命令行交互入口
-└── requirements.txt            # 依赖清单
-```
+V3 引擎的精髓在于无穷无尽的功能扩展。所有的扩展统称为 `Skill`，必须继承 `BaseSkill` 这个协议。插件会被 `PluginManager` 动态接管并且拦截底层 `EventBus` 各个周期的发信事件。
 
-## 技术反馈与架构建议
+所有合法的插件均放置于 `skills/` 文件夹即可自动被识别生效。
 
-- **流式输出**：写作模块接入了 `rich.live`，可在终端实时观察模型“码字”过程。
-- **优雅退出**：系统集成了后台线程守护，确保写入向量库的任务在 CLI 退出前全部完成。
-- **二次开发**：你可以自由修改 `s03` 的 Prompt 来定制特殊的文风或叙事节奏。
-
----
-
-*Powered by Antigravity Novel Harness System.*
+在 `gui.py` 的「🤖 V3 实验区」，您可以直接输入类似：*“帮我写一个技能，拦截每次生成前给里面注入一句话主角很帅”*，由于接入了 `SkillBuilderAgent`，系统会根据内置开发规范文档立刻帮您手搓外挂加载。

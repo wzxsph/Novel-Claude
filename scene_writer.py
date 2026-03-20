@@ -2,8 +2,9 @@ import os
 import json
 from utils.config import VOLUMES_DIR, MANUSCRIPTS_DIR
 from utils.llm_client import generate_stream
-from s04_memory_rag import pre_generation_hook, post_generation_hook
-from s02_volume_planner import get_world_context
+from volume_planner import get_world_context
+from core.event_bus import event_bus
+from core.agents.editor_agent import EditorAgent
 
 def spawn_writer_subagent(volume_id: int, chapter_id: int, previous_text: str, beat_data: dict, global_context: str) -> str:
     """
@@ -26,23 +27,21 @@ def spawn_writer_subagent(volume_id: int, chapter_id: int, previous_text: str, b
                 print(f"[Skip] 场景 {scene_id} 已存在且字数达标 ({len(content)}字)，跳过生成。")
                 return content
     
-    # 抽取并检索相关实体最新状态
-    rag_context = pre_generation_hook(beat_data)
+    # 封装基础 Prompt Payload
+    prompt_payload = [
+        f"【全局核心设定】：\n{global_context}\n",
+        f"【前情回顾】：\n{previous_text[-500:] if previous_text else '（本章开篇）'}\n",
+        f"【当前场景任务】：\n- 视角人物：{beat_data.get('pov_character', '未知')}\n- 剧情概要：{beat_data['plot_summary']}\n- 描写重点：{', '.join(beat_data.get('action_items', []))}\n- 目标字数：严格控制在 {beat_data['word_count_target']} 字左右，绝不能过度水字数。\n\n请严格按照小说正文格式展开这段剧情。直接输出正文，不要带有分析、总结等任何多余的废话。\n"
+    ]
     
-    prompt = f"""
-    【全局核心设定】：\n{global_context}\n
-    {rag_context}
-    【前情回顾】：\n{previous_text[-500:] if previous_text else "（本章开篇）"}\n
-    【当前场景任务】：
-    - 视角人物：{beat_data.get('pov_character', '未知')}
-    - 剧情概要：{beat_data['plot_summary']}
-    - 描写重点：{', '.join(beat_data.get('action_items', []))}
-    - 目标字数：严格控制在 {beat_data['word_count_target']} 字左右，绝不能过度水字数。
+    # 广播钩子：所有的外部插件（包括 MemoryRAG, SanitySystem 等）都在这一步向 payload 注入上下文
+    prompt_payload = event_bus.emit_pipeline("on_before_scene_write", prompt_payload, beat_data)
     
-    请严格按照小说正文格式展开这段剧情。直接输出正文，不要带有分析、总结等任何多余的废话。
-    """
+    # 收集所有的激活工具
+    active_tools = event_bus.collect("get_llm_tools")
+    active_tools = active_tools if active_tools else None
     
-    scene_content = generate_stream(prompt)
+    scene_content = generate_stream(prompt_payload, tools=active_tools)
     
     # 生成完毕后落盘保存，以便未来断点续传
     with open(scene_file_path, 'w', encoding='utf-8') as f:
@@ -50,27 +49,16 @@ def spawn_writer_subagent(volume_id: int, chapter_id: int, previous_text: str, b
         
     return scene_content
 
-def merge_and_edit_chapter(chapter_id: int, scenes_content: list) -> str:
+def merge_and_edit_chapter(chapter_id: int, scenes_content: list, beat_sheet: dict) -> str:
     """
-    Director Agent 专属合并逻辑。
+    Director Agent 专属合并逻辑。使用基于 ReAct 模式的复杂智能体。
     """
     print(f"\n\n[Director] 正在拼接并润色第 {chapter_id} 章...")
     raw_text = "\n\n***\n\n".join(scenes_content)
     
-    edit_prompt = f"""
-    你是一个网文主编。以下是刚从车间流水线出来的 {len(scenes_content)} 个场景拼接草稿。
-    请你消除它们之间的割裂感，平滑自然段过渡。
-    
-    要求：
-    1. 绝对不要大量删减动作和对话细节（保持原字数 95% 以上）。
-    2. 修复可能出现的视角跳跃（如上一段是主角，下一段突兀变成反派）。
-    3. 润色结尾，留下强烈的网文悬念（断章感）。
-    4. 抹除 "***" 分割线，替换为平滑的自然段过渡。
-    5. 直接输出小说的正文内容，绝不要输出分析、总结、多余的标记。
-    \n\n【草稿正文】:\n{raw_text}
-    """
-    
-    final_chapter = generate_stream(edit_prompt, system_message="你是顶尖网文白金编辑，专门做段落润色和节奏把控。")
+    agent = EditorAgent()
+    beat_requirements = json.dumps(beat_sheet.get('beats', []), ensure_ascii=False)
+    final_chapter = agent.run(raw_text, beat_requirements)
     return final_chapter
 
 def run_scene_writer(volume_id: int, start_chapter: int, end_chapter: int):
@@ -98,7 +86,7 @@ def run_scene_writer(volume_id: int, start_chapter: int, end_chapter: int):
             previous_text = scene_text
             
         # Call merger
-        final_content = merge_and_edit_chapter(chapter_id, chapter_scenes)
+        final_content = merge_and_edit_chapter(chapter_id, chapter_scenes, beat_sheet)
         
         # Save manuscript
         save_dir = os.path.join(MANUSCRIPTS_DIR, f"vol_{volume_id:02d}")
@@ -110,7 +98,8 @@ def run_scene_writer(volume_id: int, start_chapter: int, end_chapter: int):
         print(f"\n[✓] 第 {chapter_id} 章成稿已保存至 {final_path}")
         
         # Async invoke background thread for RAG
-        post_generation_hook(chapter_id, final_content)
+        # 生命周期钩子：章节生成落盘后广播
+        event_bus.emit("on_after_scene_write", beat_sheet, final_content)
 
 # --- Batch Mode Extensions ---
 
@@ -132,20 +121,14 @@ def generate_batch_jsonl(volume_id: int, start_chap: int, end_chap: int, output_
             # custom_id 格式: v01_ch001_sc001
             custom_id = f"v{volume_id:02d}_ch{chapter_id:03d}_sc{scene_id:03d}"
             
-            # 获取 RAG 记忆注入
-            rag_context = pre_generation_hook(beat)
+            # 封装基础 Prompt Payload
+            prompt_payload = [
+                f"【全局核心设定】：\n{world_context}\n",
+                f"【当前场景任务】：\n- 视角人物：{beat.get('pov_character', '未知')}\n- 剧情概要：{beat['plot_summary']}\n- 描写重点：{', '.join(beat.get('action_items', []))}\n- 目标字数：严格控制在 {beat['word_count_target']} 字左右，绝不能过度水字数。\n\n请严格按照小说正文格式展开这段剧情。直接输出正文，不要带有分析、总结等任何多余的废话。\n"
+            ]
             
-            prompt = f"""
-            【全局核心设定】：\n{world_context}\n
-            {rag_context}
-            【当前场景任务】：
-            - 视角人物：{beat.get('pov_character', '未知')}
-            - 剧情概要：{beat['plot_summary']}
-            - 描写重点：{', '.join(beat.get('action_items', []))}
-            - 目标字数：严格控制在 {beat['word_count_target']} 字左右，绝不能过度水字数。
-            
-            请严格按照小说正文格式展开这段剧情。直接输出正文，不要带有分析、总结等任何多余的废话。
-            """
+            prompt_payload = event_bus.emit_pipeline("on_before_scene_write", prompt_payload, beat)
+            prompt = "\n".join(prompt_payload)
             
             request_obj = {
                 "custom_id": custom_id,

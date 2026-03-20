@@ -12,10 +12,16 @@ load_dotenv(dotenv_path=ENV_PATH)
 
 # 尝试导入核心业务流
 try:
-    from s01_world_builder import run_world_builder
-    from s02_volume_planner import run_volume_planner, plan_macro_outlines
-    from s03_scene_writer import run_scene_writer
+    from world_builder import run_world_builder
+    from volume_planner import run_volume_planner, plan_macro_outlines
+    from scene_writer import run_scene_writer
     from utils.config import wait_for_background_tasks
+    import utils.config as sys_config
+    
+    # --- V3 微内核引擎 ---
+    from core.novel_context import NovelContext
+    from core.plugin_manager import PluginManager
+    from utils.workspace import WorkspaceManager
 except ImportError as e:
     print(f"[WARN] 导入核心模块失败: {e}")
 
@@ -81,10 +87,11 @@ class NovelClaudeGUI(ctk.CTk):
         self.log_queue = queue.Queue()
         sys.stdout = TextRedirector(self.log_queue)
         sys.stderr = TextRedirector(self.log_queue)
-        self.after(80, self._poll_log_queue)
+        # 初始化 V3 微内核插件系统
+        self._init_v3_kernel()
 
         print("═" * 60)
-        print("  🚀 Novel-Claude V2 工作站已启动")
+        print("  🚀 Novel-Claude V3 引擎已启动")
         print(f"  📂 当前项目: {os.getenv('NOVEL_NAME', '默认')}")
         print(f"  🤖 当前模型: {os.getenv('MODEL_ID', 'glm-4.6v')}")
         print("═" * 60)
@@ -165,9 +172,17 @@ class NovelClaudeGUI(ctk.CTk):
         save_btn = ctk.CTkButton(sb, text="💾 保存全部配置", command=self._save_all_config, fg_color="#2563EB", hover_color="#1D4ED8", height=36)
         save_btn.pack(padx=20, pady=(0, 10), fill="x")
 
+        # ── V3 Agent & Plugin 实验区 ──
+        self._sidebar_section(sb, "🤖 V3 实验区")
+        ctk.CTkLabel(sb, text="指令 (Meta-Gen/Agent):", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=20)
+        self.agent_intent_entry = ctk.CTkEntry(sb, width=240, placeholder_text="如: 帮我写一个打怪掉金币的 Skill")
+        self.agent_intent_entry.pack(padx=20, pady=(2, 8))
+        agent_btn = ctk.CTkButton(sb, text="✨ 召唤 SkillBuilder", command=self._run_skill_builder, fg_color="#F59E0B", hover_color="#D97706", height=32)
+        agent_btn.pack(padx=20, pady=(0, 4), fill="x")
+
         # 主题切换
         theme_frame = ctk.CTkFrame(sb, fg_color="transparent")
-        theme_frame.pack(fill="x", padx=20, pady=(4, 14))
+        theme_frame.pack(fill="x", padx=20, pady=(10, 14))
         ctk.CTkLabel(theme_frame, text="🌙 主题:", font=ctk.CTkFont(size=12)).pack(side="left")
         ctk.CTkOptionMenu(theme_frame, values=["Dark", "Light", "System"], command=lambda v: ctk.set_appearance_mode(v), width=100).pack(side="right")
 
@@ -273,10 +288,10 @@ class NovelClaudeGUI(ctk.CTk):
         scroll.pack(fill="both", expand=True, padx=4, pady=4)
 
         prompts_config = [
-            ("s01", "🌍 世界观生成提示词 (s01_world_builder)", "PROMPT_S01_WORLDBUILD", DEFAULT_PROMPT_S01),
-            ("s02", "📋 章节打点提示词 (s02_volume_planner)", "PROMPT_S02_BEATS", DEFAULT_PROMPT_S02),
-            ("s03w", "✍️ 场景写作提示词 (s03_scene_writer)", "PROMPT_S03_WRITER", DEFAULT_PROMPT_S03_WRITER),
-            ("s03e", "🖊️ Editor 润色提示词 (s03_editor)", "PROMPT_S03_EDITOR", DEFAULT_PROMPT_S03_EDITOR),
+            ("s01", "🌍 世界观生成提示词 (world_builder)", "PROMPT_S01_WORLDBUILD", DEFAULT_PROMPT_S01),
+            ("s02", "📋 章节打点提示词 (volume_planner)", "PROMPT_S02_BEATS", DEFAULT_PROMPT_S02),
+            ("s03w", "✍️ 场景写作提示词 (scene_writer)", "PROMPT_S03_WRITER", DEFAULT_PROMPT_S03_WRITER),
+            ("s03e", "🖊️ Editor 润色提示词 (editor)", "PROMPT_S03_EDITOR", DEFAULT_PROMPT_S03_EDITOR),
         ]
 
         self.prompt_boxes = {}
@@ -433,8 +448,21 @@ class NovelClaudeGUI(ctk.CTk):
         for k, v in pairs.items():
             set_key(ENV_PATH, k, v)
             os.environ[k] = v
+            
+        import importlib
+        importlib.reload(sys_config)
+        self._init_v3_kernel()
+        
         self._refresh_env_preview()
-        print("[✓] 全部配置已保存至 env 文件并更新到运行时环境。")
+        print("[✓] 全部配置已保存并重载 V3 微内核。")
+
+    def _init_v3_kernel(self):
+        """挂载 NovelContext 和 PluginManager"""
+        print("[INFO] 正在挂载 V3 微内核...")
+        self.workspace_mgr = WorkspaceManager(sys_config.NOVEL_DIR)
+        self.novel_context = NovelContext(self.workspace_mgr)
+        self.plugin_manager = PluginManager(self.novel_context)
+        self.plugin_manager.scan_and_load()
 
     def _save_single_prompt(self, env_key):
         box = self.prompt_boxes[env_key]
@@ -492,6 +520,19 @@ class NovelClaudeGUI(ctk.CTk):
                     btn.configure(state="normal")
 
         threading.Thread(target=wrapper, daemon=True).start()
+
+    def _run_skill_builder(self):
+        intent = self.agent_intent_entry.get().strip()
+        if not intent:
+            print("[WARN] 请先输入开发需求！")
+            return
+            
+        def builder_task():
+            from core.agents.skill_builder_agent import SkillBuilderAgent
+            agent = SkillBuilderAgent(self.novel_context, self.plugin_manager)
+            agent.build_skill(intent)
+            
+        self._run_in_thread("Meta-Generation", builder_task)
 
     # ──────────────────────────────────
     #  工作流按钮回调
@@ -575,7 +616,7 @@ class NovelClaudeGUI(ctk.CTk):
             return
 
         def build_task():
-            from s03_scene_writer import generate_batch_jsonl
+            from scene_writer import generate_batch_jsonl
             from utils.config import BATCH_DIR
             output_path = os.path.join(BATCH_DIR, f"vol_{int(vol):02d}_ch_{start}_{end}_req.jsonl")
             generate_batch_jsonl(int(vol), start, end, output_path)
@@ -607,7 +648,7 @@ class NovelClaudeGUI(ctk.CTk):
 
         def sync_task():
             from utils.batch_client import get_batch_status, download_batch_results
-            from s03_scene_writer import process_batch_results
+            from scene_writer import process_batch_results
             from utils.config import BATCH_DIR
             import time
             print(f"[Batch] 正在监听任务 {batch_id}...")

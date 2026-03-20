@@ -4,6 +4,7 @@ from typing import List
 from pydantic import BaseModel
 from utils.config import SETTINGS_DIR, VOLUMES_DIR
 from utils.llm_client import generate_json
+from core.event_bus import event_bus
 
 class VolumeOutline(BaseModel):
     volume_id: int
@@ -55,7 +56,10 @@ def plan_macro_outlines(total_volumes: int = 10):
     
     data = generate_json(prompt, VolumeOutlinesSchema)
     
-    for vol in data.get("volumes", []):
+    data_dict = data if isinstance(data, dict) else data.model_dump()
+    data_dict = event_bus.emit_pipeline("on_volume_planning", data_dict)
+    
+    for vol in data_dict.get("volumes", []):
         vol_id = vol["volume_id"]
         path = os.path.join(VOLUMES_DIR, f"vol_{vol_id:02d}_outline.json")
         with open(path, "w", encoding="utf-8") as f:
@@ -88,8 +92,21 @@ def plan_volume_beats(volume_id: int, chapters_to_plan: int = 50, chunk_size: in
         end_ch = min(start_ch + chunk_size - 1, chapters_to_plan)
         print(f"[INFO] 正在生成第 {start_ch}-{end_ch} 章的打点...")
         
+        default_prompt = f"""
+        你是一个网文白金主编。当前任务是为指定卷做微观打点(Beat Sheet)。
+        【任务要求】:
+        1. 生成指定范围的剧情点。
+        2. 每章必须拆分为 3 到 4 个 Scene Beats。
+        3. 每个 Beat 的 plot_summary 必须明确说明当前场景的角色动作和目的。
+        """
+        base_prompt = os.getenv("PROMPT_S02_BEATS", default_prompt)
+        
         prompt = f"""
-        你是一个网文白金主编。当前任务是为第 {volume_id} 卷【{vol_outline['volume_name']}】做微观打点(Beat Sheet)。
+        {base_prompt}
+        
+        【当前处理】:
+        - 卷号：第 {volume_id} 卷【{vol_outline['volume_name']}】
+        - 章节范围：生成第 {start_ch} 章到第 {end_ch} 章的剧情点。
         
         【全局设定参考】:
         {world_context}
@@ -97,11 +114,6 @@ def plan_volume_beats(volume_id: int, chapters_to_plan: int = 50, chunk_size: in
         【本卷核心约束】:
         - 战力天花板：{vol_outline['power_level_cap']}
         - 核心冲突：{vol_outline['core_conflict']}
-        
-        【任务要求】:
-        1. 生成第 {start_ch} 章到第 {end_ch} 章的剧情点。
-        2. 每章必须拆分为 3 到 4 个 Scene Beats。
-        3. 每个 Beat 的 plot_summary 必须明确说明当前场景的角色动作和目的。
         """
         
         data = generate_json(prompt, ChaptersSchema)
@@ -109,8 +121,8 @@ def plan_volume_beats(volume_id: int, chapters_to_plan: int = 50, chunk_size: in
         chapters = data.get("chapters", []) if isinstance(data, dict) else data.chapters
         all_chapters.extend(chapters)
         
-    # User Feedback: strict 5000 word per chapter
-    CHAPTER_TARGET_WORDS = 5000
+    # 动态读取字数约束
+    CHAPTER_TARGET_WORDS = int(os.getenv("CHAPTER_TARGET_WORDS", "5000"))
     
     for chapter in all_chapters:
         is_dict = isinstance(chapter, dict)

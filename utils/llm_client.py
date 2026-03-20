@@ -51,33 +51,63 @@ def generate_json(prompt: str, schema_model, system_message: str = "你是一个
             # Retry with error feedback
             prompt += f"\n\n上一次的输出存在格式错误：{str(e)}。请修正后重新输出纯净的 JSON。"
 
-def generate_stream(prompt: str, system_message: str = "你是一个顶尖的网络小说执笔打字机。") -> str:
+def generate_stream(prompt, system_message: str = "你是一个顶尖的网络小说执笔打字机。", tools: list = None):
     """
     模式 B: 专供 s03 执笔使用。
-    必须使用流式输出（Streaming）配合 Rich 的 Live 动态显示。
+    支持接收 tools 列表；并在流式输出完成或遇到 tool_calls 时，通过事件总线分发。
     """
+    if isinstance(prompt, list):
+        prompt_content = "\n".join(prompt)
+    else:
+        prompt_content = str(prompt)
+        
     messages = [
         {"role": "system", "content": system_message},
-        {"role": "user", "content": prompt}
+        {"role": "user", "content": prompt_content}
     ]
     
-    response = client.chat.completions.create(
-        model=MODEL_ID,
-        messages=messages,
-        temperature=0.85,
-        stream=True
-    )
+    kwargs = {
+        "model": MODEL_ID,
+        "messages": messages,
+        "temperature": 0.85,
+        "stream": True
+    }
+    if tools:
+        kwargs["tools"] = tools
+
+    response = client.chat.completions.create(**kwargs)
     
     collected_messages = []
+    tool_calls_data = {}  # 记录流式返回的 tool_calls
     
     with Live(auto_refresh=False, vertical_overflow="visible") as live:
         for chunk in response:
-            if hasattr(chunk.choices[0].delta, 'content') and chunk.choices[0].delta.content:
-                chunk_message = chunk.choices[0].delta.content
-                collected_messages.append(chunk_message)
-                # Update live display
-                full_text = "".join(collected_messages)
-                live.update(Markdown(full_text), refresh=True)
+            delta = chunk.choices[0].delta
+            
+            # Content accumulation
+            if hasattr(delta, 'content') and delta.content:
+                collected_messages.append(delta.content)
+                live.update(Markdown("".join(collected_messages)), refresh=True)
+                
+            # Tool calls accumulation (stream mode returns fragments)
+            if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                for tc_chunk in delta.tool_calls:
+                    idx = tc_chunk.index
+                    if idx not in tool_calls_data:
+                        tool_calls_data[idx] = {"id": tc_chunk.id, "name": tc_chunk.function.name, "arguments": ""}
+                    if tc_chunk.function.arguments:
+                        tool_calls_data[idx]["arguments"] += tc_chunk.function.arguments
+
+    # 如果有 tool_calls，触发 EventBus
+    if tool_calls_data:
+        from core.event_bus import event_bus
+        for idx, call in tool_calls_data.items():
+            try:
+                args = json.loads(call["arguments"])
+                print(f"\\n[⚙️ Model Calling Tool] {call['name']} -> {args}")
+                event_bus.emit("execute_tool", call["name"], args)
+            except Exception as e:
+                print(f"\\n[🚨 Tool Error] 解析或执行工具 {call['name']} 失败: {e}")
                 
     return "".join(collected_messages)
 

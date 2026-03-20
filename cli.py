@@ -1,9 +1,9 @@
 import click
 import os
 import json
-from s01_world_builder import run_world_builder
-from s02_volume_planner import run_volume_planner, plan_macro_outlines
-from s03_scene_writer import run_scene_writer
+from world_builder import run_world_builder
+from volume_planner import run_volume_planner, plan_macro_outlines
+from scene_writer import run_scene_writer
 from utils.config import wait_for_background_tasks
 
 @click.group()
@@ -13,10 +13,19 @@ def cli():
     集成世界观初始化、分卷大纲规划、多智能体场景并写作以及 RAG 动态记忆管理。
     支持 标准 API 实时码字 和 Batch API 大规模并发码字（5折优惠）。
     """
-    from utils.config import NOVEL_NAME
+    from utils.config import NOVEL_NAME, NOVEL_DIR
     current_proj = NOVEL_NAME if NOVEL_NAME else "Default (未指定)"
     click.echo(click.style(f"当前激活项目: {current_proj}", fg="cyan", bold=True))
-    pass
+    
+    # ── V3 核心挂载 ──
+    from core.novel_context import NovelContext
+    from core.plugin_manager import PluginManager
+    from utils.workspace import WorkspaceManager
+    
+    workspace = WorkspaceManager(NOVEL_DIR)
+    context = NovelContext(workspace)
+    plugin_mgr = PluginManager(context)
+    plugin_mgr.scan_and_load()
 
 @cli.command()
 @click.argument('logline')
@@ -73,7 +82,7 @@ def batch_build(volume, chapters):
     读取指定章节的 Beats 数据，注入 RAG 记忆，并打包成智谱 Batch API 所需的格式。
     生成的请求文件将保存在配置的 BATCH_DIR 目录中。
     """
-    from s03_scene_writer import generate_batch_jsonl
+    from scene_writer import generate_batch_jsonl
     from utils.config import BATCH_DIR
     
     if '-' in chapters:
@@ -116,7 +125,7 @@ def batch_sync(batch_id):
     4. 自动更新 RAG 向量记忆库。
     """
     from utils.batch_client import get_batch_status, download_batch_results
-    from s03_scene_writer import process_batch_results
+    from scene_writer import process_batch_results
     from utils.config import BATCH_DIR
     import time
     
@@ -148,8 +157,8 @@ def reindex(volume, chapters):
     
     如果由于网络报错等原因导致某些章节没有成功入库，可使用此命令通过 Aho-Corasick 自动机重新提取实体并入库。
     """
-    from s03_scene_writer import run_scene_writer
-    from s04_memory_rag import post_generation_hook
+    from scene_writer import run_scene_writer
+    from core.event_bus import event_bus
     from utils.config import MANUSCRIPTS_DIR
     import os
     
@@ -164,7 +173,8 @@ def reindex(volume, chapters):
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
                 print(f"[REINDEX] 正在补全第 {chap} 章的记忆...")
-                post_generation_hook(chap, content)
+                beat_mock = {"chapter_id": chap, "beats": []}
+                event_bus.emit("on_after_scene_write", beat_mock, content)
         else:
             print(f"[WARN] 找不到成稿文件: {path}")
             
