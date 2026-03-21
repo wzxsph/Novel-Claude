@@ -1,6 +1,6 @@
 import os
 import customtkinter as ctk
-from .constants import ENV_PATH
+from ..constants import ENV_PATH
 from ..ui_helpers import sidebar_section
 
 class SidebarFrame(ctk.CTkScrollableFrame):

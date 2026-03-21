@@ -18,7 +18,7 @@ class SkillBuilderAgent:
         # 读取规范文档作为核心知识
         prompt = "你是 Novel-Claude V3 系统的核心插件架构师。你的任务是根据用户的需求，编写合规的 Python 插件代码（BaseSkill 的子类）。\n\n"
         try:
-            template_path = self.context.workspace.get_path("reference/Skill与Agent开发模板规范.md")
+            template_path = "reference/Skill与Agent开发模板规范.md"
             if os.path.exists(template_path):
                 with open(template_path, "r", encoding="utf-8") as f:
                     prompt += "【开发规范与模板如下】：\n" + f.read() + "\n\n"
@@ -41,9 +41,10 @@ class SkillBuilderAgent:
                     "type": "object",
                     "properties": {
                         "skill_folder_name": {"type": "string", "description": "插件的文件夹英文名，如 'ext_sanity_system'"},
-                        "python_code": {"type": "string", "description": "完整的、可直接运行的 python 源码文件内容。"}
+                        "python_code": {"type": "string", "description": "完整的、可直接运行的 python 源码文件内容。"},
+                        "readme_content": {"type": "string", "description": "Markdown 格式的插件说明文档，详细介绍插件的作用、用法以及内部机制。"}
                     },
-                    "required": ["skill_folder_name", "python_code"]
+                    "required": ["skill_folder_name", "python_code", "readme_content"]
                 }
             }
         }]
@@ -71,10 +72,15 @@ class SkillBuilderAgent:
                 args = json.loads(tool_call.function.arguments)
                 folder_name = args['skill_folder_name']
                 code = args['python_code']
+                readme = args.get('readme_content', f"# {folder_name}\\n\\n自动生成的插件说明。")
                 
                 # 写入代码
-                skill_dir = self.context.workspace.get_path(f"skills/{folder_name}")
+                skill_dir = os.path.abspath(f"skills/{folder_name}")
                 os.makedirs(skill_dir, exist_ok=True)
+                
+                # 创建 README.md
+                with open(os.path.join(skill_dir, "README.md"), "w", encoding="utf-8") as f:
+                    f.write(readme)
                 
                 # 创建 __init__.py
                 with open(os.path.join(skill_dir, "__init__.py"), "w", encoding="utf-8") as f:

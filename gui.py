@@ -9,6 +9,7 @@ from gui_modules.constants import ENV_PATH
 from gui_modules.utils import TextRedirector
 from gui_modules.ui_helpers import sidebar_section, card
 from gui_modules.components.sidebar import SidebarFrame
+from gui_modules.components.file_browser import FileBrowserFrame
 from gui_modules.components.terminal import TerminalFrame
 from gui_modules.components.tabs import MainTabs
 import gui_modules.logic as logic
@@ -21,16 +22,18 @@ class NovelClaudeGUI(ctk.CTk):
         super().__init__()
 
         self.title("Novel-Claude V3 智能网文生成工作站")
-        self.geometry("1300x850")
-        self.minsize(1100, 700)
+        self.geometry("1400x850")
+        self.minsize(1200, 700)
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
 
         self._task_running = False
         self._all_buttons = []
 
-        # 布局
-        self.grid_columnconfigure(1, weight=1)
+        # 布局：3列，Sidebar(0), FileTree(1), Main(2)
+        self.grid_columnconfigure(0, weight=0) # Sidebar
+        self.grid_columnconfigure(1, weight=0) # FileBrowser
+        self.grid_columnconfigure(2, weight=1) # Tabs/Terminal
         self.grid_rowconfigure(0, weight=3)
         self.grid_rowconfigure(1, weight=2)
 
@@ -38,11 +41,14 @@ class NovelClaudeGUI(ctk.CTk):
         self.sidebar = SidebarFrame(self)
         self.sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
         
+        self.file_browser = FileBrowserFrame(self, width=250, on_view_file=self._on_view_file, on_add_review=self._on_add_review)
+        self.file_browser.grid(row=0, column=1, rowspan=2, padx=(10, 0), pady=10, sticky="nsew")
+        
         self.tabs = MainTabs(self)
-        self.tabs.grid(row=0, column=1, padx=(0, 16), pady=(10, 4), sticky="nsew")
+        self.tabs.grid(row=0, column=2, padx=(16, 16), pady=(10, 4), sticky="nsew")
         
         self.terminal = TerminalFrame(self)
-        self.terminal.grid(row=1, column=1, padx=(0, 16), pady=(4, 12), sticky="nsew")
+        self.terminal.grid(row=1, column=2, padx=(16, 16), pady=(4, 12), sticky="nsew")
 
         # 终端重定向
         self.log_queue = queue.Queue()
@@ -177,6 +183,38 @@ class NovelClaudeGUI(ctk.CTk):
 
     def _run_batch_sync(self):
         logic.run_batch_sync(self)
+
+    def _on_view_file(self, filepath):
+        """文件浏览器中点击[查看]或双击时的回调"""
+        try:
+            self.tabs.set("📄 文件查看")
+            self.viewer_path_label.configure(text=filepath)
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.viewer_text_box.configure(state="normal")
+            self.viewer_text_box.delete("0.0", "end")
+            self.viewer_text_box.insert("0.0", content)
+            self.viewer_text_box.configure(state="disabled")
+        except Exception as e:
+            print(f"[UI] 无法读取文件: {e}")
+
+    def _on_add_review(self, filepaths):
+        """文件浏览器中点击[加入审阅]时的回调"""
+        try:
+            self.tabs.set("🔍 AI 审阅")
+            current_text = self.review_target_list.get("0.0", "end").strip()
+            existing_paths = [p.strip() for p in current_text.split('\n') if p.strip()]
+            for p in filepaths:
+                if p not in existing_paths:
+                    existing_paths.append(p)
+            
+            self.review_target_list.delete("0.0", "end")
+            self.review_target_list.insert("0.0", "\n".join(existing_paths))
+        except Exception as e:
+            print(f"[UI] 无法加入审阅列表: {e}")
+
+    def _run_ai_review(self):
+        logic.run_ai_review(self)
 
 
 if __name__ == "__main__":

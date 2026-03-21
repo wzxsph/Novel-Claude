@@ -180,6 +180,23 @@ def reindex(volume, chapters):
             
     wait_for_background_tasks()
 
+@cli.command()
+@click.option('-f', '--files', multiple=True, required=True, help='需要修改的目标文件，支持多次使用 -f 指定多个文件。')
+@click.option('-i', '--instruction', required=True, help='修改意见与指令。')
+def review(files, instruction):
+    """【工具】多文件 AI 辅助审阅并自动修改文件内容。
+    
+    示例: uv run python cli.py review -f "factions.json" -f "power_levels.json" -i "将金丹期统一改为结丹期"
+    """
+    from gui_modules.logic import perform_multi_file_review
+    from utils.config import wait_for_background_tasks
+    import sys
+    
+    success = perform_multi_file_review(list(files), instruction)
+    wait_for_background_tasks()
+    if not success:
+        sys.exit(1)
+
 @cli.group()
 def skills():
     """【V3 插件管理】查看、重载、或自动生成 Skill 插件。"""

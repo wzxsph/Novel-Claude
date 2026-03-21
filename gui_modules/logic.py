@@ -170,8 +170,10 @@ def run_in_thread(app, label, task_func, *args):
             app.status_label.configure(text=f"❌ {label} — 失败", text_color="#F87171")
         finally:
             app._task_running = False
-            for btn in app._all_buttons:
-                btn.configure(state="normal")
+            def enable_btns():
+                for btn in app._all_buttons:
+                    btn.configure(state="normal")
+            app.after(0, enable_btns)
 
     threading.Thread(target=wrapper, daemon=True).start()
 
@@ -185,7 +187,7 @@ def run_skill_builder(app):
         from core.agents.skill_builder_agent import SkillBuilderAgent
         agent = SkillBuilderAgent(app.novel_context, app.plugin_manager)
         agent.build_skill(intent)
-        refresh_skills_list(app)
+        app.after(0, refresh_skills_list, app)
         
     run_in_thread(app, "Meta-Generation", builder_task)
 
@@ -256,6 +258,109 @@ def run_reindex(app):
                 print(f"[WARN] 找不到成稿文件: {path}")
 
     run_in_thread(app, f"RAG 记忆重建 (卷{vol} 章{chaps})", reindex_task)
+
+def perform_multi_file_review(filepaths, instruction):
+    """核心 AI 多文件审阅逻辑，供 GUI 和 CLI 复用"""
+    import os
+    import re
+    from .constants import DEFAULT_PROMPT_REVIEW
+    from utils.llm_client import generate_stream
+
+    print(f"\n[AI Review] 开始审阅 {len(filepaths)} 个文件...")
+    file_contents = {}
+    for fp in filepaths:
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                file_contents[fp] = f.read()
+        except Exception as e:
+            print(f"[ERROR] 读取文件 {fp} 失败: {e}")
+            return False
+        
+    print("[AI Review] 正在请求大模型生成修改版内容 (可能需要较长时间)...")
+    
+    sys_prompt = os.getenv("PROMPT_REVIEW", DEFAULT_PROMPT_REVIEW).format(instruction=instruction)
+    
+    # 构建 User Prompt
+    user_prompt_parts = ["【源文件内容】:"]
+    for fp, content in file_contents.items():
+        user_prompt_parts.append(f"==== BEGIN FILE: {fp} ====\n{content}\n==== END FILE ====\n")
+        
+    user_prompt_parts.append("\n请输出修改后的完整内容，必须严格遵守与输入相同的格式：\n==== BEGIN FILE: <完整路径> ====\n<修改后的内容>\n==== END FILE ====\n")
+    user_prompt_parts.append("如果你认为某个文件不需要修改，也请按此格式原样输出它的内容，不要遗漏。不要输出任何除了这个标记块之外的内容（比如分析或总结）。")
+    user_prompt = "\n".join(user_prompt_parts)
+    
+    try:
+        new_content = generate_stream(prompt=user_prompt, system_message=sys_prompt)
+        new_content = new_content.strip()
+        
+        # 尝试清理整体 markdown 代码块
+        if new_content.startswith("```"):
+            lines = new_content.split("\n")
+            if len(lines) > 2:
+                new_content = "\n".join(lines[1:-1])
+                
+        # 解析输出格式
+        pattern = re.compile(r"==== BEGIN FILE: (.*?) ====\n(.*?)\n==== END FILE ====", re.DOTALL)
+        matches = pattern.findall(new_content)
+        
+        if not matches:
+            print("\n[ERROR] 大模型输出的格式不正确，无法自动解析保存。")
+            return False
+            
+        success_count = 0
+        for fp, modified_content in matches:
+            fp = fp.strip()
+            if fp in file_contents or os.path.exists(fp):
+                # 再次清理文件内部的可能是 markdown 的代码块包裹
+                modified_content = modified_content.strip()
+                if modified_content.startswith("```"):
+                    m_lines = modified_content.split("\n")
+                    if len(m_lines) > 2:
+                        modified_content = "\n".join(m_lines[1:-1])
+                        
+                with open(fp, "w", encoding="utf-8") as f:
+                    f.write(modified_content + "\n")
+                print(f"\n[✓] 修改已自动应用覆盖文件: {fp}")
+                success_count += 1
+            else:
+                print(f"\n[WARN] 大模型返回了未知文件路径: {fp}，跳过保存。")
+                
+        print(f"\n[INFO] 审阅完成！共更新了 {success_count} 个文件。如果不满意，你可以修改提示词后再次尝试。")
+        return True
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"\n[ERROR] AI 生成或保存失败: {e}")
+        return False
+
+def run_ai_review(app):
+    raw_targets = app.review_target_list.get("0.0", "end").strip()
+    filepaths = [p.strip() for p in raw_targets.split('\n') if p.strip()]
+    instruction = app.review_instruction_entry.get("0.0", "end").strip()
+    
+    if not filepaths:
+        print("[WARN] 请先选择或输入有效的目标文件路径！")
+        return
+        
+    valid_paths = []
+    for fp in filepaths:
+        if not os.path.exists(fp):
+            print(f"[WARN] 找不到文件: {fp}，将跳过。")
+        else:
+            valid_paths.append(fp)
+
+    if not valid_paths:
+        print("[WARN] 没有找到任何有效的文件路径。")
+        return
+
+    if not instruction:
+        print("[WARN] 请输入修改意见与指令！")
+        return
+
+    def review_task():
+        perform_multi_file_review(valid_paths, instruction)
+
+    run_in_thread(app, "AI 辅助审阅 / 修改", review_task)
 
 def run_batch_build(app):
     vol = app.batch_vol_entry.get().strip()

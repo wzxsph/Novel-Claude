@@ -65,12 +65,14 @@ uv pip install -r requirements.txt
 ```bash
 uv run gui.py
 ```
-GUI 包含 5 个功能 Tab：
+GUI 包含 7 个功能 Tab：
 - **📝 工作流** — 一站式完成阶段 1/2/3 的生成任务
 - **🔌 Skills 插件** — 查看已加载插件、热重载、SkillBuilder Agent
 - **⚙️ 环境配置** — 查看当前 env 文件
 - **✏️ 提示词工程** — 编辑和保存 S01~S04 的核心提示词
 - **📦 Batch 批量** — 构建/提交/同步 Batch API 任务
+- **📄 文件查看器** — 直接在可视化界面内阅读选中的文件内容
+- **🔍 AI 审阅** — 支持同时选中多个关联文件，使用 AI 对这些文件进行联合审阅并自动覆写修改
 
 ### 3. CLI 快速使用 (Terminal)
 
@@ -87,6 +89,9 @@ uv run python cli.py plan --volume 1
 
 # 阶段 3：召唤执笔集群实时码字生成第 1 卷 1 到 5 章
 uv run python cli.py write --volume 1 --chapters 1-5
+
+# 阶段 4：使用 AI 进行局部审阅与多文件关联修改
+uv run python cli.py review -f ".novel/factions.json" -f ".novel/power_levels.json" -i "将金丹期统一改为结丹期"
 ```
 
 #### V3 插件管理命令

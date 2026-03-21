@@ -14,12 +14,16 @@ class MainTabs(ctk.CTkTabview):
         tab_cfg = self.add("⚙️ 环境配置")
         tab_prompt = self.add("✏️ 提示词工程")
         tab_batch = self.add("📦 Batch 批量")
+        tab_viewer = self.add("📄 文件查看")
+        tab_review = self.add("🔍 AI 审阅")
 
         self._build_tab_workflow(tab_wf)
         self._build_tab_skills(tab_skills)
         self._build_tab_config(tab_cfg)
         self._build_tab_prompts(tab_prompt)
         self._build_tab_batch(tab_batch)
+        self._build_tab_viewer(tab_viewer)
+        self._build_tab_review(tab_review)
 
     def _build_tab_workflow(self, parent):
         scroll = ctk.CTkScrollableFrame(parent)
@@ -209,3 +213,43 @@ class MainTabs(ctk.CTkTabview):
         btn_sync = ctk.CTkButton(row3, text="⬇️ 同步结果", height=34, fg_color="#16A34A", hover_color="#15803D", command=self.app._run_batch_sync)
         btn_sync.pack(side="right")
         self.app._all_buttons.append(btn_sync)
+
+    def _build_tab_viewer(self, parent):
+        scroll = ctk.CTkScrollableFrame(parent)
+        scroll.pack(fill="both", expand=True, padx=4, pady=4)
+
+        f1 = self.app._card(scroll, "📄 当前文件内容")
+        self.app.viewer_path_label = ctk.CTkLabel(f1, text="等待选择文件...", font=ctk.CTkFont(size=12, weight="bold"), text_color="#60A5FA", anchor="w")
+        self.app.viewer_path_label.pack(fill="x", padx=12, pady=(8, 4))
+        
+        self.app.viewer_text_box = ctk.CTkTextbox(f1, font=ctk.CTkFont(family="Consolas", size=13), height=450, wrap="word")
+        self.app.viewer_text_box.pack(fill="both", expand=True, padx=12, pady=(0, 10))
+        self.app.viewer_text_box.insert("0.0", "请在左侧文件树中双击文件，或选中后点击底部的【👀 查看所选】。")
+        self.app.viewer_text_box.configure(state="disabled")
+
+    def _build_tab_review(self, parent):
+        scroll = ctk.CTkScrollableFrame(parent)
+        scroll.pack(fill="both", expand=True, padx=4, pady=4)
+
+        f1 = self.app._card(scroll, "🎯 选定目标文件 (可多选)")
+        ctk.CTkLabel(f1, text="你可以从左侧文件树选择多个文件并点击【➕ 加入审阅】：", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=12, pady=(8, 2))
+        
+        row1 = ctk.CTkFrame(f1, fg_color="transparent")
+        row1.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        self.app.review_target_list = ctk.CTkTextbox(row1, height=80, font=ctk.CTkFont(family="Consolas", size=12))
+        self.app.review_target_list.pack(side="left", fill="both", expand=True)
+
+        btn_clear = ctk.CTkButton(row1, text="🗑️ 清空", width=60, hover_color="#DC2626",
+                                  command=lambda: self.app.review_target_list.delete("0.0", "end"))
+        btn_clear.pack(side="right", padx=(8, 0), anchor="n")
+
+        f2 = self.app._card(scroll, "📝 修改意见与指令")
+        ctk.CTkLabel(f2, text="输入你的审阅意见，AI 将根据该意见修改选中文件：", font=ctk.CTkFont(size=12)).pack(anchor="w", padx=12, pady=(8, 2))
+        self.app.review_instruction_entry = ctk.CTkTextbox(f2, height=150, font=ctk.CTkFont(family="Consolas", size=13))
+        self.app.review_instruction_entry.pack(fill="x", padx=12, pady=(0, 10))
+        self.app.review_instruction_entry.insert("0.0", "例如：\n请统一以下文件中主角的战力设定。\n或者：根据第一个文件的大纲修改后续文件。")
+
+        btn_review = ctk.CTkButton(scroll, text="✨ 提交 AI 辅助修改 (支持多文件)", height=40, font=ctk.CTkFont(size=14, weight="bold"),
+                                   fg_color="#F59E0B", hover_color="#D97706", command=self.app._run_ai_review)
+        btn_review.pack(padx=12, pady=(15, 10), fill="x")
+        self.app._all_buttons.append(btn_review)
