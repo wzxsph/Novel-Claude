@@ -11,9 +11,8 @@ Through the underlying `EventBus` engine and dynamic `PluginManager`, it support
 
 - **Microkernel Plugin System**: All additional functions (such as dynamic RAG memory, combat rationality detection, etc.) are decoupled from the main timeline as plugins (Skills). It supports Hot-Reload and fault-tolerance isolation, ensuring that a single plugin crash does not affect hours of generation progress.
 - **Complex Agent Support**:
-  - 🖋️ **Editor Agent**: Mounted at the end of chapter generation, it uses a multi-turn ReAct reasoning loop to strictly review drafts, automatically fixing point-of-view jumps and context fragmentation.
-  - 🤖 **Skill Builder Agent**: System-level Meta-Generation. Enter a line of natural language in the GUI or CLI, and the system will **automatically write and compile a valid plugin (Skill)**.
-- **Full Platform Coverage (GUI & CLI)**: Features a beautiful and modern desktop console based on `customtkinter`, including workflows, **real-time plugin toggles**, configuration panels, prompt customization, batch generation monitoring, and a built-in terminal module directly connected to the `EventBus`.
+  - 🖋️ **Editor Agent**: Uses a multi-turn ReAct reasoning loop to strictly review drafts, automatically fixing point-of-view jumps and context fragmentation.
+  - 🤖 **Skill Builder Agent**: System-level Meta-Generation. Enter a line of natural language in the CLI, and the system will **automatically write and compile a valid plugin (Skill)**.
 - **Cost Reduction & Efficiency (Batch API)**: Native support for Zhipu/OpenAI format Batch API pipelines, supporting 50% discount for offline concurrent generation of massive chapters, with automatic merging and callbacks.
 
 ---
@@ -42,7 +41,6 @@ novel_claude/
 ├── volume_planner.py           # Engine 2: Volume & Scene Segmentation
 ├── scene_writer.py             # Engine 3: Scene Writing & Merging
 ├── cli.py                      # Terminal Entry
-├── gui.py                      # Desktop Entry
 └── utils/                      # Config & LLM Client API Layer
 ```
 
@@ -57,19 +55,7 @@ Ensure you have Python >= 3.10.
 uv pip install -r requirements.txt
 ```
 
-### 2. GUI Startup (Recommended)
-Run directly to enter the modern desktop environment:
-```bash
-uv run gui.py
-```
-The GUI contains 5 functional tabs:
-- **📝 Workflow** — One-stop completion of Stages 1/2/3 tasks.
-- **🔌 Skills** — View loaded plugins, hot-reload, and SkillBuilder Agent.
-- **⚙️ Config** — View the current env file.
-- **✏️ Prompt Engineering** — Edit and save core prompts for S01~S04.
-- **📦 Batch** — Build/submit/sync Batch API tasks.
-
-### 3. CLI Quick Start (Terminal)
+### 2. CLI Quick Start
 
 #### Basic Generation Flow
 ```bash
@@ -83,12 +69,24 @@ uv run python cli.py plan
 uv run python cli.py plan --volume 1
 
 # Stage 3: Start the writing cluster to generate Volume 1, Chapters 1-5
-uv run python cli.py write --volume 1 --chapters 1-5
+uv run python cli.py write --volume 1 --chapters "1-5"
+```
+
+#### Batch API Flow
+```bash
+# Build JSONL request file
+uv run python cli.py batch-build --volume 1 --chapters "1-50"
+
+# Submit async task (returns Batch ID, please keep it safe)
+uv run python cli.py batch-submit .batch/vol_01_ch_1_50_req.jsonl
+
+# Sync and merge results (polls status and auto-downloads)
+uv run python cli.py batch-sync <batch_id>
 ```
 
 #### V3 Plugin Management Commands
 ```bash
-# List all plugins (🟢 Loaded, 🔴 Disabled, ⚪ Error)
+# List all plugins
 uv run python cli.py skills list
 
 # Disable/Enable a specific plugin (e.g., Gold Finger)
@@ -119,16 +117,16 @@ class MyAwesomeSkill(BaseSkill):
     def __init__(self, context):
         super().__init__(context)
         self.name = "MyAwesomeSkill"
-    
+
     def on_init(self):
         print(f"[{self.name}] Plugin initialized!")
-    
+
     def on_before_scene_write(self, prompt_payload, beat_data):
         # Inject custom prompt before each generation
-        prompt_payload.append("\\n[System Injection] Note: The protagonist's behavior should be cold and rational.")
+        prompt_payload.append("\n[System Injection] Note: The protagonist's behavior should be cold and rational.")
         return prompt_payload
 ```
-3. Save and click "🔄 Reload All Plugins" in the GUI or run `uv run python cli.py skills reload` in the CLI.
+3. Save and run `uv run python cli.py skills reload`.
 
 ### Lifecycle Hooks Overview
 
@@ -136,8 +134,8 @@ class MyAwesomeSkill(BaseSkill):
 |---------|---------|------|
 | `on_init()` | After plugin load | Initialize resources |
 | `on_volume_planning()` | During volume planning | Intervene/Modify outline |
-| `on_before_scene_write()` | Before scnene generation | Inject memory/settings |
-| `on_after_scene_write()` | After scnene generation | Statistics/Storage |
+| `on_before_scene_write()` | Before scene generation | Inject memory/settings |
+| `on_after_scene_write()` | After scene generation | Statistics/Storage |
 | `on_chapter_render()` | Final chapter rendering | Replace placeholders |
 | `get_llm_tools()` | LLM tool call cycle | Register tools |
 
@@ -155,10 +153,37 @@ Implemented in `skills/ext_gold_finger/`:
 
 ### Plugin Toggle Mechanism
 
-The system implements toggle logic by generating a `.disabled` tag file in the plugin folder. You can toggle this via the GUI "Skills" page or CLI `skills enable/disable`.
+The system implements toggle logic by generating a `.disabled` tag file in the plugin folder. Toggle via CLI `skills enable/disable`.
 
 ### Auto-Generation (Meta-Generation)
 ```bash
 uv run python cli.py skills build "Write a plugin that checks the rationality of combat descriptions"
 ```
 The system will automatically generate code following the standards and apply it via hot-reload.
+
+---
+
+## 📂 Directory Structure
+
+| Path | Description |
+|------|-------------|
+| `cli.py` | CLI terminal entry point |
+| `world_builder.py` | Worldview initialization engine |
+| `volume_planner.py` | Volume outline planning engine |
+| `scene_writer.py` | Scene writing and merging engine |
+| `core/` | Microkernel core modules |
+| `core/agents/` | Agent implementations |
+| `skills/` | Plugin directory (drop-in生效) |
+| `utils/` | Utilities (LLM client, config, etc.) |
+| `docs/CLI_COMMANDS.md` | Complete CLI command documentation |
+
+---
+
+## 📜 Built-in Plugins
+
+| Plugin | Description |
+|--------|-------------|
+| `ext_gold_finger` | Gold Finger plugin |
+| `ext_world_highlight_system` | World highlight system |
+| `ext_handsome_protagonist` | Protagonist halo plugin |
+| `core_memory_rag` | Core memory RAG system |
