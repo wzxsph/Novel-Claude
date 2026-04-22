@@ -5,8 +5,14 @@ from rich.live import Live
 from rich.markdown import Markdown
 from utils.config import ANTHROPIC_API_KEY, MODEL_ID, FLASH_MODEL_ID
 
-# Initialize ZhipuAI client
-client = ZhipuAI(api_key=ANTHROPIC_API_KEY)
+# Initialize ZhipuAI client (lazy)
+client = None
+
+def _get_client():
+    global client
+    if client is None:
+        client = ZhipuAI(api_key=ANTHROPIC_API_KEY)
+    return client
 
 def generate_json(prompt: str, schema_model, system_message: str = "你是一个专业的数据结构化助手。") -> dict:
     """
@@ -23,7 +29,7 @@ def generate_json(prompt: str, schema_model, system_message: str = "你是一个
                 {"role": "system", "content": system_message + "\n请严格输出 JSON 格式，不要包含任何额外的 explanations。遵循以下 JSON Schema:\n" + json.dumps(schema_model.model_json_schema(), ensure_ascii=False)},
                 {"role": "user", "content": prompt}
             ]
-            response = client.chat.completions.create(
+            response = _get_client().chat.completions.create(
                 model=MODEL_ID,
                 messages=messages,
                 temperature=0.1
@@ -75,7 +81,7 @@ def generate_stream(prompt, system_message: str = "你是一个顶尖的网络�
     if tools:
         kwargs["tools"] = tools
 
-    response = client.chat.completions.create(**kwargs)
+    response = _get_client().chat.completions.create(**kwargs)
     
     collected_messages = []
     tool_calls_data = {}  # 记录流式返回的 tool_calls
@@ -128,7 +134,7 @@ def extract_entities(prompt: str) -> list[str]:
     ]
     
     try:
-        response = client.chat.completions.create(
+        response = _get_client().chat.completions.create(
             model=FLASH_MODEL_ID,
             messages=messages,
             temperature=0.1

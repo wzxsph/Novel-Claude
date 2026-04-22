@@ -1,6 +1,13 @@
 import click
 import os
-import json
+import sys
+
+# Check for interactive mode flag BEFORE importing other modules
+if '--interactive' in sys.argv or '-i' in sys.argv:
+    from cli.repl import start_repl
+    start_repl()
+    sys.exit(0)
+
 from world_builder import run_world_builder
 from volume_planner import run_volume_planner, plan_macro_outlines
 from scene_writer import run_scene_writer
@@ -185,14 +192,14 @@ def reindex(volume, chapters):
 @click.option('-i', '--instruction', required=True, help='修改意见与指令。')
 def review(files, instruction):
     """【工具】多文件 AI 辅助审阅并自动修改文件内容。
-    
+
     示例: uv run python cli.py review -f "factions.json" -f "power_levels.json" -i "将金丹期统一改为结丹期"
     """
-    from gui_modules.logic import perform_multi_file_review
+    from cli.commands.agent_commands import perform_multi_file_review_impl
     from utils.config import wait_for_background_tasks
     import sys
-    
-    success = perform_multi_file_review(list(files), instruction)
+
+    success = perform_multi_file_review_impl(list(files), instruction)
     wait_for_background_tasks()
     if not success:
         sys.exit(1)
