@@ -9,6 +9,8 @@ dist/
 
 # Novel-Claude Data (Contain your local world settings, drafts and vector DB)
 .novel/
+.novel_projects/
+.novel_*/
 reference/
 manuscripts/
 出版级成稿目录/
