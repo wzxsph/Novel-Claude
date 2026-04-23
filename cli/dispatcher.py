@@ -97,17 +97,17 @@ class CommandDispatcher:
             cmd = parts[0]
             args = parts[1:]
 
-            # Try exact match first
+            # Try command + subcommand FIRST (more specific match)
+            if args and f"{cmd} {args[0]}" in self.commands:
+                subcmd = f"{cmd} {args[0]}"
+                handler = self.commands[subcmd]
+                return handler(args[1:] if len(args) > 1 else [])
+
+            # Try exact match
             if cmd in self.commands:
                 handler = self.commands[cmd]
                 if handler:
                     return handler(args)
-
-            # Try command + subcommand
-            if f"{cmd} {args[0]}" if args else None in self.commands:
-                subcmd = f"{cmd} {args[0]}"
-                handler = self.commands[subcmd]
-                return handler(args[1:] if len(args) > 1 else [])
 
             # Check for Click-style commands (init, plan, write, etc.)
             if cmd in ['init', 'plan', 'write', 'reindex', 'skills']:

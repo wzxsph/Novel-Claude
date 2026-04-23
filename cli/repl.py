@@ -1,4 +1,5 @@
 """Interactive REPL for Novel-Claude CLI."""
+import os
 import sys
 from prompt_toolkit import PromptSession, ANSI
 from prompt_toolkit.history import FileHistory
@@ -39,7 +40,7 @@ class REPL:
 
     def __init__(self):
         self.dispatcher = CommandDispatcher()
-        self.history = FileHistory("~/.novel_claude_history")
+        self.history = FileHistory(os.path.expanduser("~/.novel_claude_history"))
         self.completer = NovelClaudeCompleter()
         self.session = PromptSession(
             history=self.history,
