@@ -17,7 +17,8 @@ manuscripts/
 implementation_plan.md
 task.md
 
-# Environment and Secrets
+# Scripts
+scripts/
 env
 .env
 error_log.txt
