@@ -1,7 +1,8 @@
 """Interactive REPL for Novel-Claude CLI."""
 import os
 import sys
-from prompt_toolkit import PromptSession, ANSI
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
 from prompt_toolkit.key_binding import KeyBindings
@@ -10,15 +11,22 @@ from cli.dispatcher import CommandDispatcher
 from cli.project_manager import project_manager
 from cli.completer import NovelClaudeCompleter
 
-# Custom prompt style
-def get_prompt():
+
+def get_prompt() -> FormattedText:
     """Generate the prompt string based on current context."""
     project = project_manager.current_project or "none"
     vol = project_manager.current_volume
     ch = project_manager.current_chapter
 
-    prompt_text = f"[Novel: [cyan]{project}[/cyan]] ([yellow]vol:{vol}[/yellow], [yellow]ch:{ch}[/yellow]) > "
-    return ANSI(prompt_text)
+    return FormattedText([
+        ('ansicyan', '[Novel: '),
+        ('ansigreen bold', project),
+        ('ansicyan', '] ('),
+        ('ansiyellow', f'vol:{vol}'),
+        ('ansicyan', ', '),
+        ('ansiyellow', f'ch:{ch}'),
+        ('ansicyan', ') > '),
+    ])
 
 # Key bindings for special keys
 kb = KeyBindings()

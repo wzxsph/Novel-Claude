@@ -14,8 +14,7 @@ def show(args: List[str]) -> Dict[str, Any]:
     try:
         from utils.config import (
             ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, MODEL_ID,
-            NOVEL_NAME, NOVEL_DIR, CHAPTER_TARGET_WORDS,
-            TOTAL_VOLUMES, CHAPTERS_PER_VOLUME
+            NOVEL_NAME, NOVEL_DIR
         )
 
         output = ["Current Configuration:"]
@@ -23,9 +22,6 @@ def show(args: List[str]) -> Dict[str, Any]:
         output.append(f"  MODEL_ID: {MODEL_ID}")
         output.append(f"  NOVEL_NAME: {NOVEL_NAME or '(not set)'}")
         output.append(f"  NOVEL_DIR: {NOVEL_DIR}")
-        output.append(f"  CHAPTER_TARGET_WORDS: {CHAPTER_TARGET_WORDS}")
-        output.append(f"  TOTAL_VOLUMES: {TOTAL_VOLUMES}")
-        output.append(f"  CHAPTERS_PER_VOLUME: {CHAPTERS_PER_VOLUME}")
 
         return {'message': '\n'.join(output)}
     except Exception as e:
