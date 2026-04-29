@@ -46,6 +46,8 @@ class CommandDispatcher:
         self.commands['batch_submit'] = novel_commands.batch_submit
         self.commands['batch_sync'] = novel_commands.batch_sync
         self.commands['reindex'] = novel_commands.reindex
+        self.commands['audit'] = novel_commands.audit
+        self.commands['track'] = novel_commands.track
 
         # Skill commands
         self.commands['skills'] = skill_commands.handle
@@ -68,7 +70,7 @@ class CommandDispatcher:
         self.commands['alias'] = builtins.alias
 
         # Also register aliases without / prefix
-        for cmd in ['init', 'plan', 'write', 'reindex', 'review']:
+        for cmd in ['init', 'plan', 'write', 'reindex', 'review', 'audit', 'track']:
             self.commands[cmd] = self._get_handler(cmd)
 
     def _get_handler(self, cmd: str):
@@ -78,6 +80,8 @@ class CommandDispatcher:
             'plan': novel_commands.plan,
             'write': novel_commands.write,
             'reindex': novel_commands.reindex,
+            'audit': novel_commands.audit,
+            'track': novel_commands.track,
         }
         return handlers.get(cmd)
 

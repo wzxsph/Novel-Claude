@@ -1,4 +1,4 @@
-zhipuai
+openai
 chromadb
 pydantic>=2.7.0
 click

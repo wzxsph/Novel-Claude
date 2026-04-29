@@ -141,10 +141,18 @@ Project Management:
   projects info                     - Show current project info
   projects delete <name>            - Delete a project
 
-Novel Workflow:
-  init <logline>                    - Initialize world view
-  plan [volume]                     - Generate volume outline
-  write --volume N --chapters X-Y   - Write chapters
+Novel Workflow (Snowflake Method):
+  init <logline>                    - Initialize world (goldfinger → one_sentence)
+  expand                            - Expand to story outline
+  world                             - Design world setting
+  blueprint                        - Generate core blueprint (characters, scenes, orgs)
+  plan [volume]                     - Generate volume outlines (10 volumes)
+  plan --volume N                   - Generate stage outlines for volume N
+  write --volume N --chapters X-Y  - Write chapters
+  audit --stage N                   - Audit stage consistency
+  audit --chapter N                 - Audit chapter consistency
+  track --volume N --chapter M      - Track entity state changes
+  reindex --volume N --chapters X-Y - Reindex chapters to RAG
   batch build/submit/sync           - Batch API workflow
 
 File Operations:

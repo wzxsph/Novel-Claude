@@ -2,6 +2,7 @@
 import os
 import sys
 import subprocess
+from pathlib import Path
 from typing import List, Any, Dict
 from cli.project_manager import project_manager
 
@@ -217,3 +218,124 @@ def reindex(args: List[str]) -> Dict[str, Any]:
         return {'message': f'Reindexed chapters {start_ch}-{end_ch}.'}
     except Exception as e:
         return {'error': f'reindex failed: {e}'}
+
+
+# ============================================================================
+# Audit Commands
+# ============================================================================
+
+def audit(args: List[str]) -> Dict[str, Any]:
+    """Audit stage or chapter consistency."""
+    target_type = None
+    target_id = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == '--stage' and i + 1 < len(args):
+            target_type = 'stage'
+            target_id = int(args[i + 1])
+            i += 2
+        elif args[i] == '--chapter' and i + 1 < len(args):
+            target_type = 'chapter'
+            target_id = int(args[i + 1])
+            i += 2
+        else:
+            i += 1
+
+    if target_type is None:
+        return {'error': 'Usage: audit --stage N, audit --chapter N'}
+
+    try:
+        from core.context_assembler import assemble_context
+        from utils.llm_client import generate_stream
+        from utils.config import VOLUMES_DIR
+        import json
+
+        if target_type == 'stage':
+            # Load stage outline
+            vol_id = project_manager.get_current_project()['context'].get('volume', 1)
+            stage_path = Path(VOLUMES_DIR) / f"vol_{vol_id:02d}_stages" / f"stage_{target_id:02d}.json"
+            if not stage_path.exists():
+                return {'error': f'Stage outline not found: {stage_path}'}
+
+            with open(stage_path, 'r', encoding='utf-8') as f:
+                stage_data = json.load(f)
+
+            prompt_path = Path("prompts/阶段审核.txt")
+            if not prompt_path.exists():
+                return {'error': 'Stage audit prompt not found'}
+
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                audit_prompt = f.read()
+
+            context = assemble_context(audit_prompt, "stage_outline", stage_data)
+            result = generate_stream(context)
+
+            print(f"\n[Stage Audit] Stage {target_id}:")
+            print(result)
+            return {'message': f'Stage {target_id} audit complete.'}
+
+        elif target_type == 'chapter':
+            # Load chapter outline and content
+            vol_id = project_manager.get_current_project()['context'].get('volume', 1)
+            ch_outline_path = Path(VOLUMES_DIR) / f"vol_{vol_id:02d}_chapters" / f"ch_{target_id:03d}_outline.json"
+            ch_content_path = Path(MANUSCRIPTS_DIR) / f"vol_{vol_id:02d}" / f"ch_{target_id:03d}_final.md"
+
+            if not ch_outline_path.exists():
+                return {'error': f'Chapter outline not found: {ch_outline_path}'}
+
+            with open(ch_outline_path, 'r', encoding='utf-8') as f:
+                chapter_data = json.load(f)
+
+            chapter_content = ""
+            if ch_content_path.exists():
+                with open(ch_content_path, 'r', encoding='utf-8') as f:
+                    chapter_content = f.read()
+
+            prompt_path = Path("prompts/章节审核.txt")
+            if not prompt_path.exists():
+                return {'error': 'Chapter audit prompt not found'}
+
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                audit_prompt = f.read()
+
+            # Inject chapter content into context
+            chapter_data['content'] = chapter_content
+            context = assemble_context(audit_prompt, "chapter_outline", chapter_data)
+            result = generate_stream(context)
+
+            print(f"\n[Chapter Audit] Chapter {target_id}:")
+            print(result)
+            return {'message': f'Chapter {target_id} audit complete.'}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {'error': f'audit failed: {e}'}
+
+
+def track(args: List[str]) -> Dict[str, Any]:
+    """Track entity states after chapter generation."""
+    volume = None
+    chapter = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == '--volume' and i + 1 < len(args):
+            volume = int(args[i + 1])
+            i += 2
+        elif args[i] == '--chapter' and i + 1 < len(args):
+            chapter = int(args[i + 1])
+            i += 2
+        else:
+            i += 1
+
+    if volume is None or chapter is None:
+        return {'error': 'Usage: track --volume N --chapter N'}
+
+    try:
+        from core.entity_tracker import track_chapter_entities
+        track_chapter_entities(volume, chapter)
+        return {'message': f'Entity states for ch {chapter} tracked.'}
+    except Exception as e:
+        return {'error': f'track failed: {e}'}
