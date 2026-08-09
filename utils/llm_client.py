@@ -168,71 +168,126 @@ class ProgressiveWriter:
 
     def _write_impl(self, prompt, system_message, chapter_id, tools) -> str:
         prompt_content = "\n".join(prompt) if isinstance(prompt, list) else str(prompt)
-        kwargs: dict[str, Any] = {
-            "model": config.MODEL_ID,
-            "messages": [
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": prompt_content},
-            ],
-            "temperature": get_config("generation.temperature", 0.85),
-            "stream": True,
-        }
-        if tools:
-            kwargs["tools"] = tools
-
-        response = get_client().chat.completions.create(**kwargs)
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": prompt_content},
+        ]
         self.accumulated = []
         self.last_callback_count = 0
-        tool_calls: dict[int, dict[str, str | None]] = {}
+        max_tool_rounds = max(1, int(get_config("generation.max_tool_rounds", 4)))
+        tool_round = 0
 
         with Live(auto_refresh=False, vertical_overflow="visible") as live:
-            for chunk in response:
-                delta = chunk.choices[0].delta
-                if getattr(delta, "content", None):
-                    self.accumulated.append(delta.content)
-                    accumulated_text = "".join(self.accumulated)
-                    if (
-                        self.on_progress
-                        and len(accumulated_text) - self.last_callback_count >= self.chunk_size
-                    ):
-                        self.last_callback_count = len(accumulated_text)
-                        self.on_progress(chapter_id, accumulated_text, len(accumulated_text))
-                    live.update(Markdown(accumulated_text), refresh=True)
+            while True:
+                kwargs: dict[str, Any] = {
+                    "model": config.MODEL_ID,
+                    "messages": messages,
+                    "temperature": get_config("generation.temperature", 0.85),
+                    "stream": True,
+                }
+                if tools:
+                    kwargs["tools"] = tools
 
-                for tool_chunk in getattr(delta, "tool_calls", None) or []:
-                    index = int(tool_chunk.index)
-                    current = tool_calls.setdefault(
-                        index, {"id": None, "name": None, "arguments": ""}
+                response = get_client().chat.completions.create(**kwargs)
+                round_text: list[str] = []
+                tool_calls: dict[int, dict[str, str | None]] = {}
+
+                for chunk in response:
+                    delta = chunk.choices[0].delta
+                    if getattr(delta, "content", None):
+                        round_text.append(delta.content)
+                        self.accumulated.append(delta.content)
+                        accumulated_text = "".join(self.accumulated)
+                        if (
+                            self.on_progress
+                            and len(accumulated_text) - self.last_callback_count
+                            >= self.chunk_size
+                        ):
+                            self.last_callback_count = len(accumulated_text)
+                            self.on_progress(
+                                chapter_id, accumulated_text, len(accumulated_text)
+                            )
+                        live.update(Markdown(accumulated_text), refresh=True)
+
+                    for tool_chunk in getattr(delta, "tool_calls", None) or []:
+                        index = int(tool_chunk.index)
+                        current = tool_calls.setdefault(
+                            index, {"id": None, "name": None, "arguments": ""}
+                        )
+                        if getattr(tool_chunk, "id", None):
+                            current["id"] = tool_chunk.id
+                        function = getattr(tool_chunk, "function", None)
+                        if function and getattr(function, "name", None):
+                            current["name"] = function.name
+                        if function and getattr(function, "arguments", None):
+                            current["arguments"] = (
+                                str(current["arguments"]) + function.arguments
+                            )
+
+                if not tool_calls:
+                    break
+                if tool_round >= max_tool_rounds:
+                    raise RuntimeError(
+                        f"工具调用超过 {max_tool_rounds} 轮，已停止以避免无限循环"
                     )
-                    if getattr(tool_chunk, "id", None):
-                        current["id"] = tool_chunk.id
-                    function = getattr(tool_chunk, "function", None)
-                    if function and getattr(function, "name", None):
-                        current["name"] = function.name
-                    if function and getattr(function, "arguments", None):
-                        current["arguments"] = str(current["arguments"]) + function.arguments
+                tool_round += 1
 
-        self._dispatch_tool_calls(tool_calls)
+                assistant_calls = []
+                for index, call in sorted(tool_calls.items()):
+                    call_id = str(call.get("id") or f"call_{tool_round}_{index}")
+                    call["id"] = call_id
+                    assistant_calls.append(
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": str(call.get("name") or ""),
+                                "arguments": str(call.get("arguments") or "{}"),
+                            },
+                        }
+                    )
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "".join(round_text) or None,
+                        "tool_calls": assistant_calls,
+                    }
+                )
+                messages.extend(self._dispatch_tool_calls(tool_calls))
+
         final_result = _strip_reasoning_prefix("".join(self.accumulated))
         if self.on_progress:
             self.on_progress(chapter_id, final_result, len(final_result))
         return final_result
 
     @staticmethod
-    def _dispatch_tool_calls(tool_calls: dict[int, dict[str, str | None]]) -> None:
+    def _dispatch_tool_calls(
+        tool_calls: dict[int, dict[str, str | None]],
+    ) -> list[dict[str, str]]:
         if not tool_calls:
-            return
+            return []
         from core.event_bus import event_bus
 
-        for call in tool_calls.values():
+        results = []
+        for index, call in sorted(tool_calls.items()):
             name = call.get("name")
-            if not name:
-                continue
+            call_id = str(call.get("id") or f"call_unknown_{index}")
             try:
                 arguments = json.loads(str(call.get("arguments") or "{}"))
-                event_bus.emit("execute_tool", name, arguments)
+                if not isinstance(arguments, dict):
+                    raise TypeError("工具参数必须是 JSON 对象")
+                content = (
+                    event_bus.dispatch_tool(str(name), arguments)
+                    if name
+                    else "[Tool Error] 工具调用缺少名称"
+                )
             except (json.JSONDecodeError, TypeError) as exc:
-                print(f"[Tool Error] 无法解析或执行 {name}: {exc}")
+                content = f"[Tool Error] 无法解析 {name or '<unknown>'} 的参数: {exc}"
+                print(content)
+            results.append(
+                {"role": "tool", "tool_call_id": call_id, "content": content}
+            )
+        return results
 
 
 def generate_stream(

@@ -84,8 +84,9 @@ class ConfigTests(unittest.TestCase):
         config.set_active_novel(original_name, ensure=False)
 
     def test_workspace_name_cannot_escape_the_project_root(self):
-        with self.assertRaises(ValueError):
-            config._normalize_novel_name("../escape")
+        for invalid in ("../escape", "line\nbreak", "cli_config", "projects"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                config._normalize_novel_name(invalid)
         self.assertEqual(config._normalize_novel_name("default"), "")
 
 

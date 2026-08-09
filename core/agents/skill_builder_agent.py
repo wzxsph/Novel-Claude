@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 
 from utils import config
@@ -88,32 +89,63 @@ class SkillBuilderAgent:
                 folder_name = args['skill_folder_name']
                 code = args['python_code']
                 readme = args.get('readme_content', f"# {folder_name}\\n\\n自动生成的插件说明。")
+
+                try:
+                    compile(code, f"<generated-skill:{folder_name}>", "exec")
+                except (SyntaxError, ValueError) as exc:
+                    print(f"[ERROR] 生成的插件代码无法编译，未写入磁盘: {exc}")
+                    return False
                 
                 # 写入代码
                 try:
-                    skill_dir = str(self._resolve_skill_dir(folder_name))
+                    skill_dir = self._resolve_skill_dir(folder_name)
                 except ValueError as exc:
                     print(f"[ERROR] 拒绝不安全的插件目录名: {exc}")
                     return False
-                os.makedirs(skill_dir, exist_ok=True)
+                directory_existed = skill_dir.exists()
+                tracked_files = [
+                    skill_dir / "README.md",
+                    skill_dir / "__init__.py",
+                    skill_dir / "skill.py",
+                ]
+                previous = {
+                    path: path.read_bytes() if path.is_file() else None
+                    for path in tracked_files
+                }
+                skill_dir.mkdir(parents=True, exist_ok=True)
                 
                 # 创建 README.md
-                with open(os.path.join(skill_dir, "README.md"), "w", encoding="utf-8") as f:
+                with (skill_dir / "README.md").open("w", encoding="utf-8") as f:
                     f.write(readme)
                 
                 # 创建 __init__.py
-                with open(os.path.join(skill_dir, "__init__.py"), "w", encoding="utf-8") as f:
+                with (skill_dir / "__init__.py").open("w", encoding="utf-8") as f:
                     f.write("# Auto-generated skill package\n")
                     
                 # 创建 skill.py
-                skill_file = os.path.join(skill_dir, "skill.py")
-                with open(skill_file, "w", encoding="utf-8") as f:
+                skill_file = skill_dir / "skill.py"
+                with skill_file.open("w", encoding="utf-8") as f:
                     f.write(code)
                     
                 print(f"[✓] 插件代码已生成并写入: {skill_file}")
                 
                 # 热更新加载
-                return self.plugin_mgr.hot_reload(folder_name)
+                if self.plugin_mgr.hot_reload(folder_name):
+                    return True
+
+                # Hot reload is transactional in PluginManager. Restore the
+                # source files as well so the next process start still sees the
+                # last working version.
+                if directory_existed:
+                    for path, old_content in previous.items():
+                        if old_content is None:
+                            path.unlink(missing_ok=True)
+                        else:
+                            path.write_bytes(old_content)
+                else:
+                    shutil.rmtree(skill_dir)
+                print("[ERROR] 插件加载失败，已恢复写入前的文件。")
+                return False
                 
         print(f"[❌] 开发失败，大模型未能调用正确的代码保存工具。模型输出:\n{msg.content}")
         return False

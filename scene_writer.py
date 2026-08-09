@@ -226,6 +226,7 @@ def generate_chapter_content(volume_id: int, chapter_id: int, state_manager=None
 
     # Emit hook for skill injection
     beat_data = {
+        "volume_id": volume_id,
         "chapter_id": chapter_id,
         "title": chapter_title,
         "overview": overview,
@@ -247,13 +248,26 @@ def generate_chapter_content(volume_id: int, chapter_id: int, state_manager=None
 
     # Generate content with progressive saving
     writer = ProgressiveWriter(on_progress=on_progress, chunk_size=get_config("writing.progress_chunk_size", 1000))
-    tools = event_bus.collect("get_llm_tools")
+    tools = event_bus.collect_tools()
     content = writer.write(prompt, chapter_id=chapter_id, tools=tools or None)
 
     return content
 
 
-def review_chapter_content(volume_id: int, chapter_id: int, content: str, outline: dict) -> str:
+def _normalized_chapter_title(chapter_id: int, outline: dict | None) -> str:
+    raw_title = str((outline or {}).get("title") or "").strip()
+    title = re.sub(
+        r"^第\s*\d+\s*章\s*(?:[:：\-—]\s*)?",
+        "",
+        raw_title,
+        count=1,
+    ).strip()
+    return title or "未命名"
+
+
+def review_chapter_content(
+    volume_id: int, chapter_id: int, content: str, outline: dict | None
+) -> tuple[str, bool, list[str]]:
     """
     Review chapter content for:
     1. Missing title - add from outline
@@ -272,10 +286,18 @@ def review_chapter_content(volume_id: int, chapter_id: int, content: str, outlin
     word_count_check = get_config("review.word_count_check", True)
 
     # Check if title exists (first line should be # 第X章 xxx)
-    title_pattern = r'^#\s*第\d+章\s+.+'
+    title_pattern = (
+        rf'^#\s*第\s*{chapter_id}\s*章\s*(?:[:：\-—]\s*)?\S.*'
+    )
     if not re.match(title_pattern, content.strip()):
         if auto_fix_title:
-            chapter_title = outline.get("title", f"第{chapter_id}章") if outline else f"第{chapter_id}章"
+            chapter_title = _normalized_chapter_title(chapter_id, outline)
+            content = re.sub(
+                r'^\s*#\s*第\s*\d+\s*章[^\n]*(?:\n+|$)',
+                '',
+                content,
+                count=1,
+            )
             content = f"# 第{chapter_id}章 {chapter_title}\n\n{content}"
             issues.append(f"[审阅] 缺少章节标题，已自动添加：第{chapter_id}章 {chapter_title}")
         else:
@@ -296,9 +318,9 @@ def review_chapter_content(volume_id: int, chapter_id: int, content: str, outlin
             issues.append(f"[审阅] 字数检查通过（{word_count}字）")
 
     # Check for obvious logical issues
-    first_lines = content.strip().split('\n')[:5]
-    if len(first_lines) < 3:
-        issues.append("[审阅] 正文开头内容过少")
+    body = re.sub(r'^#\s*第[^\n]*(?:\n+|$)', '', content, count=1).strip()
+    if not body:
+        issues.append("[审阅] 正文内容为空")
         return content, True, issues
 
     return content, False, issues
@@ -314,10 +336,12 @@ def count_chinese_words(text: str) -> int:
     import re
 
     # Remove markdown title if present
-    text = re.sub(r'^#\s*第\d+章\s+.+\n?', '', text)
+    text = re.sub(r'^#\s*第[^\n]*(?:\n|$)', '', text, count=1)
 
     # Count Chinese characters (each Chinese char is a word)
-    chinese_chars = len(re.findall(r'[一-鿿　-〿＀-￯]', text))
+    chinese_chars = len(
+        re.findall(r'[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]', text)
+    )
 
     # Count English words (sequences of letters/digits)
     english_words = len(re.findall(r'[a-zA-Z0-9]+', text))
@@ -326,7 +350,9 @@ def count_chinese_words(text: str) -> int:
     return chinese_chars + english_words
 
 
-def deep_review_chapter(content: str, outline: dict, entity_list: List[str]) -> dict:
+def deep_review_chapter(
+    content: str, outline: dict | None, entity_list: List[str]
+) -> dict:
     """
     Deep review of chapter content vs outline.
     Returns: {needs_rewrite: bool, guidance: str, issues: List[str]}
@@ -346,17 +372,18 @@ def deep_review_chapter(content: str, outline: dict, entity_list: List[str]) -> 
         missing_events: List[str]
         wrong_events: List[str]
 
+    outline_data = outline or {}
     prompt = f"""你是网络小说编辑。请审阅以下章节内容，与大纲进行对比。
 
 【章节大纲】：
-标题：{outline.get('title', '')}
-概述：{outline.get('overview', '')}
+标题：{outline_data.get('title', '')}
+概述：{outline_data.get('overview', '')}
 
 【章节正文】：
 {content[:3000]}...（正文已截断）
 
 【参与者实体】：
-{', '.join(entity_list)}
+{', '.join(str(entity) for entity in entity_list)}
 
 请检查：
 1. 大纲中的核心事件是否在正文中出现
@@ -477,9 +504,8 @@ def run_scene_writer(volume_id: int, start_chapter: int, end_chapter: int):
                 # Save chapter (returns path, needs_rewrite, guidance)
                 save_result = save_chapter_content(volume_id, chapter_id, content)
                 if isinstance(save_result, tuple):
-                    final_path, needs_rewrite, guidance = save_result
+                    _, needs_rewrite, guidance = save_result
                 else:
-                    final_path = save_result
                     needs_rewrite = False
                     guidance = ""
 
@@ -491,12 +517,23 @@ def run_scene_writer(volume_id: int, start_chapter: int, end_chapter: int):
                     temp_path.unlink()
 
                 # Emit after scene write hook
-                beat_data = {"chapter_id": chapter_id, "beats": [], "needs_rewrite": needs_rewrite, "guidance": guidance}
+                beat_data = {
+                    "volume_id": volume_id,
+                    "chapter_id": chapter_id,
+                    "beats": [],
+                    "needs_rewrite": needs_rewrite,
+                    "guidance": guidance,
+                }
                 event_bus.emit("on_after_scene_write", beat_data, content)
 
                 # Track entity states for this chapter
                 from core.entity_tracker import track_chapter_entities
-                track_chapter_entities(volume_id, chapter_id)
+                try:
+                    track_chapter_entities(volume_id, chapter_id)
+                except Exception as exc:
+                    print(
+                        f"[WARN] 第 {chapter_id} 章正文已保存，但实体状态追踪失败: {exc}"
+                    )
 
                 completed += 1
             else:
@@ -630,32 +667,64 @@ def generate_batch_jsonl(volume_id: int, start_chap: int, end_chap: int, output_
     return len(requests)
 
 
-def process_batch_results(result_jsonl: str):
-    """Process batch results and save chapters."""
+def process_batch_results(result_jsonl: str) -> dict[str, int]:
+    """Process valid Batch rows independently and report a merge summary."""
+    summary = {"saved": 0, "failed": 0, "skipped": 0}
     if not os.path.exists(result_jsonl):
         print(f"[ERROR] 找不到结果文件: {result_jsonl}")
-        return
+        summary["failed"] = 1
+        return summary
 
-    chapters_map = {}
-
+    seen_ids = set()
     with open(result_jsonl, 'r', encoding='utf-8') as f:
-        for line in f:
-            data = json.loads(line)
-            custom_id = data["custom_id"]
+        for line_number, line in enumerate(f, 1):
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError as exc:
+                print(f"[WARN] Batch 第 {line_number} 行不是有效 JSON，已跳过: {exc}")
+                summary["failed"] += 1
+                continue
+
+            custom_id = data.get("custom_id") if isinstance(data, dict) else None
+            match = re.fullmatch(r"v(\d+)_ch(\d+)", str(custom_id or ""))
+            if not match:
+                print(f"[WARN] Batch 第 {line_number} 行 custom_id 无效，已跳过。")
+                summary["skipped"] += 1
+                continue
+            if custom_id in seen_ids:
+                print(f"[WARN] Batch 任务 {custom_id} 重复出现，后续结果已跳过。")
+                summary["skipped"] += 1
+                continue
+            seen_ids.add(custom_id)
+
+            vol_id, ch_id = (int(value) for value in match.groups())
+            if vol_id <= 0 or ch_id <= 0:
+                print(f"[WARN] Batch 任务 {custom_id} 的卷章编号无效，已跳过。")
+                summary["skipped"] += 1
+                continue
+
             try:
                 content = data["response"]["body"]["choices"][0]["message"]["content"]
-            except (KeyError, TypeError):
-                content = "（该段场景生成失败）"
+            except (IndexError, KeyError, TypeError):
+                print(f"[WARN] Batch 任务 {custom_id} 未返回正文，已保留原文件。")
+                summary["failed"] += 1
+                continue
+            if not isinstance(content, str) or not content.strip():
+                print(f"[WARN] Batch 任务 {custom_id} 返回空正文，已保留原文件。")
+                summary["failed"] += 1
+                continue
 
-            chapters_map[custom_id] = content
+            try:
+                save_chapter_content(vol_id, ch_id, content)
+            except Exception as exc:
+                print(f"[WARN] Batch 任务 {custom_id} 保存失败: {exc}")
+                summary["failed"] += 1
+                continue
+            summary["saved"] += 1
 
-    for custom_id, content in chapters_map.items():
-        # Parse custom_id: v01_ch001
-        parts = custom_id.split("_")
-        vol_id = int(parts[0][1:])
-        ch_id = int(parts[1][2:])
-
-        save_chapter_content(vol_id, ch_id, content)
+    return summary
 
 
 def get_world_context() -> str:

@@ -41,7 +41,7 @@ class PermissionManager:
                     data = json.load(f)
                     level = data.get('level', 'READ')
                     self.level = PermissionLevel[level]
-            except (json.JSONDecodeError, KeyError):
+            except (OSError, json.JSONDecodeError, KeyError, TypeError):
                 pass
 
     def _save(self):

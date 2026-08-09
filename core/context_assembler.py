@@ -42,7 +42,6 @@ class CardDatabase:
                 import re
                 m = re.match(r"vol_(\d+)_outline", f.stem)
                 if m:
-                    vol_id = int(m.group(1))
                     with open(f, 'r', encoding='utf-8') as fp:
                         data = json.load(fp)
                         if "volume_outlines" not in self.cards:
@@ -128,9 +127,9 @@ class ContextAssembler:
             "故事大纲": "story_outline",
             "世界观设定": "world_setting",
             "核心蓝图": "core_blueprint",
-            "角色卡": "characters",
-            "场景卡": "scenes",
-            "组织卡": "organizations",
+            "角色卡": "character_cards",
+            "场景卡": "scene_cards",
+            "组织卡": "organization_cards",
             "分卷大纲": "volume_outline",
             "阶段大纲": "stage_outline",
             "章节大纲": "chapter_outline",
@@ -148,12 +147,12 @@ class ContextAssembler:
                     cards.append(json.load(f))
 
         # Load characters/scenes/organizations from core_blueprint
-        if mapped_type in ["characters", "scenes", "organizations"]:
+        if mapped_type in ["character_cards", "scene_cards", "organization_cards"]:
             blueprint_file = Path(self.db.base_dir) / "settings" / "core_blueprint.json"
             if blueprint_file.exists():
                 with open(blueprint_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    content = data.get("content", {})
+                    content = data.get("content", data)
                     if mapped_type in content:
                         cards = content[mapped_type]
 

@@ -10,7 +10,13 @@ class NovelClaudeCompleter(Completer):
     """Custom completer for Novel-Claude CLI."""
 
     def __init__(self):
-        self.base_completer = PathCompleter()
+        self.path_completer = PathCompleter(
+            get_paths=lambda: [str(project_manager.current_path)]
+        )
+        self.directory_completer = PathCompleter(
+            only_directories=True,
+            get_paths=lambda: [str(project_manager.current_path)],
+        )
         self.commands = [
             # Built-in
             '/help', '/exit', '/clear', '/history',
@@ -40,33 +46,60 @@ class NovelClaudeCompleter(Completer):
 
     def get_completions(self, document: Document, complete_event):
         """Generate completions based on current input."""
+        text = document.text_before_cursor.lstrip()
         word = document.get_word_before_cursor()
-        text = document.text
 
         # Check if in project name context
-        if text.startswith('projects switch '):
+        if any(
+            text.startswith(prefix)
+            for prefix in (
+                'projects switch ',
+                'projects delete ',
+                'projects info ',
+            )
+        ):
             for proj in project_manager.list_projects():
                 if proj.startswith(word):
                     yield Completion(proj, start_position=-len(word))
+            return
 
-        # Check if in path context (after ls, cat, cd, find)
-        elif any(text.startswith(cmd) for cmd in ['ls ', 'cat ', 'cd ', 'find ']):
-            # Use path completer for file paths
-            for completion in self.base_completer.get_completions(document, complete_event):
+        # Check if in path context. Complete relative to the active REPL
+        # directory, not the process working directory.
+        for command in ('ls', 'cat', 'cd'):
+            prefix = f"{command} "
+            if not text.startswith(prefix):
+                continue
+            argument = text[len(prefix):]
+            path_document = Document(argument, cursor_position=len(argument))
+            completer = (
+                self.directory_completer if command == 'cd' else self.path_completer
+            )
+            for completion in completer.get_completions(path_document, complete_event):
                 yield completion
+            return
 
-        # Otherwise, command completion
-        else:
-            for cmd in self.commands:
-                if cmd.startswith(word):
-                    yield Completion(cmd, start_position=-len(word))
+        # Complete skill directory names after commands that take one.
+        if any(
+            text.startswith(prefix)
+            for prefix in ('skills enable ', 'skills disable ', 'skills reload ')
+        ):
+            skills_dir = config.PROJECT_ROOT / 'skills'
+            if skills_dir.is_dir():
+                for directory in sorted(skills_dir.iterdir()):
+                    if directory.is_dir() and directory.name.startswith(word):
+                        yield Completion(directory.name, start_position=-len(word))
+            return
 
-            # Also complete skill names
-            if text.startswith('skills enable ') or text.startswith('skills disable '):
-                skill_name = word
-                skills_dir = str(config.PROJECT_ROOT / 'skills')
-                import os
-                if os.path.exists(skills_dir):
-                    for d in os.listdir(skills_dir):
-                        if os.path.isdir(os.path.join(skills_dir, d)) and d.startswith(skill_name):
-                            yield Completion(d, start_position=-len(skill_name))
+        # Complete against the entire command prefix. Using only the last word
+        # made inputs such as `projects sw` impossible to complete.
+        variants = set(self.commands)
+        variants.update(
+            f"/{command}" for command in self.commands if not command.startswith('/')
+        )
+        for command in sorted(variants):
+            if command.startswith(text) and command != text:
+                yield Completion(
+                    command[len(text):],
+                    start_position=0,
+                    display=command,
+                )

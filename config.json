@@ -18,6 +18,7 @@
   "generation": {
     "temperature": 0.85,
     "max_retries": 3,
+    "max_tool_rounds": 4,
     "timeout": 120,
     "retry_delay": 5
   }

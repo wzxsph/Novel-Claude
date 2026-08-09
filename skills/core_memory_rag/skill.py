@@ -42,8 +42,8 @@ class CoreMemoryRagSkill(BaseSkill):
         self.automaton = None
 
     def on_init(self) -> None:
-        self.chroma_client = chromadb.PersistentClient(path=config.MEMORY_DIR)
         emb_fn = ZhipuEmbeddingFunction()
+        self.chroma_client = chromadb.PersistentClient(path=config.MEMORY_DIR)
         self.collection = self.chroma_client.get_or_create_collection(name="novel_memory", embedding_function=emb_fn)
         self.automaton = self._build_entity_automaton()
 
@@ -64,6 +64,17 @@ class CoreMemoryRagSkill(BaseSkill):
                 data = json.load(f)
                 for fac in data.get("factions", []):
                     entities.append(fac.get("name", ""))
+
+        # Current world-building versions store all three card types in the
+        # core blueprint rather than in the legacy files above.
+        blueprint_path = os.path.join(config.SETTINGS_DIR, "core_blueprint.json")
+        if os.path.exists(blueprint_path):
+            with open(blueprint_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            content = data.get("content", data)
+            for key in ("character_cards", "scene_cards", "organization_cards"):
+                for card in content.get(key, []):
+                    entities.append(card.get("name", ""))
                     
         for idx, entity in enumerate(set(entities)):
             if entity.strip():
@@ -111,7 +122,13 @@ class CoreMemoryRagSkill(BaseSkill):
                 metadatas = results['metadatas'][0]
                 
                 combined = list(zip(docs, metadatas))
-                combined.sort(key=lambda x: x[1].get('chapter_id', 0), reverse=True)
+                combined.sort(
+                    key=lambda x: (
+                        x[1].get("volume_id", 0),
+                        x[1].get("chapter_id", 0),
+                    ),
+                    reverse=True,
+                )
                 
                 recent_chunks = [c[0] for c in combined[:3]]
                 condensed = self._condense_state(entity, recent_chunks)
@@ -127,9 +144,12 @@ class CoreMemoryRagSkill(BaseSkill):
         return prompt_payload
 
     def on_after_scene_write(self, beat_data: dict, raw_text: str) -> None:
+        volume_id = int(beat_data.get("volume_id") or self.context.current_volume_id)
         chapter_id = int(beat_data.get("chapter_id") or self.context.current_chapter_id)
         # 使用 EventBus 触发后台记录
-        config.register_background_task(self._background_update_task, chapter_id, raw_text)
+        config.register_background_task(
+            self._background_update_task, volume_id, chapter_id, raw_text
+        )
 
     def chunk_text(self, text: str) -> list[str]:
         raw_chunks = re.split(r'\*\*\*|\n\s*\n', text)
@@ -148,7 +168,9 @@ class CoreMemoryRagSkill(BaseSkill):
             chunks.append(current_chunk)
         return chunks
 
-    def _background_update_task(self, chapter_id: int, final_content: str):
+    def _background_update_task(
+        self, volume_id: int, chapter_id: int, final_content: str
+    ):
         try:
             from rich.console import Console
             Console().print(f"[dim]  [Background Task] 正在将第 {chapter_id} 章内容向量化并入库...[/dim]")
@@ -165,17 +187,29 @@ class CoreMemoryRagSkill(BaseSkill):
                 chunk_entities = self._extract_entities_fast(chunk)
                 involved = ",".join(chunk_entities) if chunk_entities else ""
                 documents.append(chunk)
-                ids.append(f"ch_{chapter_id}_chunk_{i}")
+                ids.append(f"v{volume_id:02d}_ch{chapter_id:03d}_chunk_{i}")
                 metadatas.append({
+                    "volume_id": volume_id,
                     "chapter_id": chapter_id,
                     "involved_entities": involved
                 })
                     
             if documents:
+                existing = self.collection.get(
+                    where={
+                        "$and": [
+                            {"volume_id": {"$eq": volume_id}},
+                            {"chapter_id": {"$eq": chapter_id}},
+                        ]
+                    }
+                )
                 self.collection.upsert(
                     ids=ids,
                     documents=documents,
                     metadatas=metadatas
                 )
+                stale_ids = set(existing.get("ids", [])) - set(ids)
+                if stale_ids:
+                    self.collection.delete(ids=sorted(stale_ids))
         except Exception as e:
             print(f"[WARN] 后台向量化任务失败 (Ch_{chapter_id}): {e}")

@@ -1,4 +1,3 @@
-import json
 from core.base_skill import BaseSkill
 
 class WorldHighlightSkill(BaseSkill):

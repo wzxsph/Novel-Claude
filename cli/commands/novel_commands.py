@@ -216,8 +216,16 @@ def batch_sync(args: List[str]) -> Dict[str, Any]:
                 result_path = Path(config.BATCH_DIR) / f"{batch_id}_results.jsonl"
                 error_path = Path(config.BATCH_DIR) / f"{batch_id}_errors.jsonl"
                 if download_batch_results(batch_id, str(result_path), str(error_path)):
-                    process_batch_results(str(result_path))
-                return {"message": "Batch 结果已同步并合并。"}
+                    summary = process_batch_results(str(result_path))
+                    message = (
+                        "Batch 结果已同步："
+                        f"保存 {summary['saved']} 章，失败 {summary['failed']} 行，"
+                        f"跳过 {summary['skipped']} 行。"
+                    )
+                    if summary["saved"] == 0:
+                        return _error(message)
+                    return {"message": message}
+                return _error("Batch 已完成，但结果文件下载失败。")
             if current_status in {"failed", "cancelled", "expired"}:
                 return _error(f"Batch 任务状态异常: {current_status}")
             time.sleep(60)
@@ -232,6 +240,10 @@ def reindex(args: List[str]) -> Dict[str, Any]:
         from core.runtime import get_runtime
 
         runtime = get_runtime()
+        if "core_memory_rag" not in runtime.context.active_skills:
+            return _error(
+                "RAG Skill 未加载；请配置 ZHIPU_API_KEY，并先运行 skills list 检查状态。"
+            )
         indexed = 0
         for chapter in range(start, end + 1):
             path = (
@@ -244,7 +256,11 @@ def reindex(args: List[str]) -> Dict[str, Any]:
                 continue
             runtime.context.set_current_ids(volume, chapter)
             content = path.read_text(encoding="utf-8")
-            event_bus.emit("on_after_scene_write", {"chapter_id": chapter, "beats": []}, content)
+            event_bus.emit(
+                "on_after_scene_write",
+                {"volume_id": volume, "chapter_id": chapter, "beats": []},
+                content,
+            )
             indexed += 1
         return {"message": f"已提交 {indexed} 章进行 RAG 重建。"}
     except Exception as exc:
