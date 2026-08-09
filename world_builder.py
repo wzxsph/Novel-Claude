@@ -8,12 +8,11 @@ Following NovelForge's approach:
 4. blueprint (core_blueprint) - Design characters, scenes, organizations, volume count
 """
 
-import os
 import json
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from utils.config import SETTINGS_DIR
+from utils import config
 from utils.llm_client import generate_json
 from core.context_assembler import assemble_context
 
@@ -209,7 +208,7 @@ SCHEMA_MAP = {
 
 def save_setting_chunk(category: str, content: dict) -> str:
     """Save setting chunk to the settings directory."""
-    target_path = Path(SETTINGS_DIR) / f"{category}.json"
+    target_path = Path(config.SETTINGS_DIR) / f"{category}.json"
     target_path.parent.mkdir(parents=True, exist_ok=True)
     with open(target_path, 'w', encoding='utf-8') as f:
         json.dump(content, f, ensure_ascii=False, indent=2)
@@ -218,7 +217,7 @@ def save_setting_chunk(category: str, content: dict) -> str:
 
 def load_setting_chunk(category: str) -> Optional[dict]:
     """Load a setting chunk from the settings directory."""
-    target_path = Path(SETTINGS_DIR) / f"{category}.json"
+    target_path = Path(config.SETTINGS_DIR) / f"{category}.json"
     if target_path.exists():
         with open(target_path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -285,7 +284,7 @@ def render_to_markdown():
                 md_lines.append(f"#### {org.get('name', '')}")
                 md_lines.append(f"- {org.get('description', '')}")
 
-    manual_path = Path(SETTINGS_DIR) / "world_manual.md"
+    manual_path = Path(config.SETTINGS_DIR) / "world_manual.md"
     with open(manual_path, 'w', encoding='utf-8') as f:
         f.write("\n".join(md_lines))
     return str(manual_path)
@@ -304,7 +303,7 @@ def run_init(logline: str):
     content = generate_json(prompt, schema_model)
     content_dict = content if isinstance(content, dict) else content.model_dump()
     save_setting_chunk("goldfinger", content_dict)
-    print(f"  [✓] 金手指已保存")
+    print("  [✓] 金手指已保存")
 
     # Step 1b: Generate one_sentence
     print("[s01b] 正在生成一句话梗概...")
@@ -314,7 +313,7 @@ def run_init(logline: str):
     content = generate_json(prompt, schema_model)
     content_dict = content if isinstance(content, dict) else content.model_dump()
     save_setting_chunk("one_sentence", content_dict)
-    print(f"  [✓] 一句话梗概已保存")
+    print("  [✓] 一句话梗概已保存")
 
     return True
 
@@ -327,6 +326,9 @@ def run_expand():
 
     one_sentence = load_setting_chunk("one_sentence")
     goldfinger = load_setting_chunk("goldfinger")
+    if not one_sentence or not goldfinger:
+        print("[ERROR] 缺少 goldfinger.json 或 one_sentence.json，请先运行 init。")
+        return False
 
     context = assemble_context(PROMPT_TEMPLATES["story_outline"], "story_outline", {
         "one_sentence": one_sentence,
@@ -337,7 +339,7 @@ def run_expand():
     content = generate_json(context, schema_model)
     content_dict = content if isinstance(content, dict) else content.model_dump()
     save_setting_chunk("story_outline", content_dict)
-    print(f"  [✓] 故事大纲已保存")
+    print("  [✓] 故事大纲已保存")
     return True
 
 
@@ -348,6 +350,9 @@ def run_world():
     print("[s03] 正在设计世界观...")
 
     story_outline = load_setting_chunk("story_outline")
+    if not story_outline:
+        print("[ERROR] 缺少 story_outline.json，请先运行 expand。")
+        return False
 
     context = assemble_context(PROMPT_TEMPLATES["world_setting"], "world_setting", story_outline)
 
@@ -355,7 +360,7 @@ def run_world():
     content = generate_json(context, schema_model)
     content_dict = content if isinstance(content, dict) else content.model_dump()
     save_setting_chunk("world_setting", content_dict)
-    print(f"  [✓] 世界观设定已保存")
+    print("  [✓] 世界观设定已保存")
     return True
 
 
@@ -367,6 +372,9 @@ def run_blueprint():
 
     story_outline = load_setting_chunk("story_outline")
     world_setting = load_setting_chunk("world_setting")
+    if not story_outline or not world_setting:
+        print("[ERROR] 缺少 story_outline.json 或 world_setting.json，请先完成前置阶段。")
+        return False
 
     context = assemble_context(PROMPT_TEMPLATES["core_blueprint"], "core_blueprint", {
         "story_outline": story_outline,
@@ -377,7 +385,7 @@ def run_blueprint():
     content = generate_json(context, schema_model)
     content_dict = content if isinstance(content, dict) else content.model_dump()
     save_setting_chunk("core_blueprint", content_dict)
-    print(f"  [✓] 核心蓝图已保存")
+    print("  [✓] 核心蓝图已保存")
 
     # Render to markdown
     md_path = render_to_markdown()
@@ -400,10 +408,14 @@ def run_world_builder(logline: str, step: str = None):
         return run_blueprint()
     else:
         # Run all steps in sequence
-        run_init(logline)
-        run_expand()
-        run_world()
-        run_blueprint()
+        if run_init(logline) is False:
+            return False
+        if run_expand() is False:
+            return False
+        if run_world() is False:
+            return False
+        if run_blueprint() is False:
+            return False
         print("[✓] 世界观构建完成！")
         return True
 

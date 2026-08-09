@@ -1,149 +1,83 @@
-"""Skill management commands for Novel-Claude CLI."""
-from typing import List, Any, Dict
+"""Skill management handlers for the interactive REPL."""
+
+from typing import Any, Dict, List
+
+from utils import config
 
 
 def handle(args: List[str]) -> Dict[str, Any]:
-    """Handle skills command with no subcommand."""
-    return {'message': 'Use: skills list, skills enable <name>, skills disable <name>, skills reload [name], skills build <request>'}
+    return {"message": "Use: skills list|enable|disable|reload|build"}
 
 
 def list_skills(args: List[str]) -> Dict[str, Any]:
-    """List all skills."""
+    if args:
+        return {"error": "Usage: skills list"}
     try:
-        from core.novel_context import NovelContext
-        from core.plugin_manager import PluginManager
-        from utils.workspace import WorkspaceManager
-        from utils.config import NOVEL_DIR
+        from core.runtime import get_runtime
 
-        workspace = WorkspaceManager(NOVEL_DIR)
-        context = NovelContext(workspace)
-        mgr = PluginManager(context)
-        mgr.scan_and_load()
+        runtime = get_runtime()
+        active = runtime.context.active_skills
+        output = [f"Loaded {len(active)} skills:"]
+        for name, skill in sorted(active.items()):
+            output.append(f"  🟢 {skill.name} (skills/{name}/skill.py)")
 
-        output = []
-        if context.active_skills:
-            output.append(f"Loaded {len(context.active_skills)} skills:")
-            for name, skill in context.active_skills.items():
-                output.append(f"  🟢 {skill.name} (skills/{name}/skill.py)")
-        else:
-            output.append("No skills loaded.")
-
-        # List skills directory
-        import os
-        skills_dir = "skills"
-        if os.path.exists(skills_dir):
-            all_dirs = [d for d in os.listdir(skills_dir)
-                       if os.path.isdir(os.path.join(skills_dir, d))
-                       and not d.startswith("__") and not d.startswith(".")]
-            unloaded = [d for d in all_dirs if d not in context.active_skills]
-
-            disabled = [d for d in unloaded if os.path.exists(os.path.join(skills_dir, d, ".disabled"))]
-            errors = [d for d in unloaded if d not in disabled]
-
-            if disabled:
-                output.append("\nDisabled:")
-                for d in disabled:
-                    output.append(f"  🔴 skills/{d}/")
-            if errors:
-                output.append("\nLoad errors:")
-                for d in errors:
-                    output.append(f"  ⚠️ skills/{d}/")
-
-        return {'message': '\n'.join(output)}
-    except Exception as e:
-        return {'error': f'skills list failed: {e}'}
+        skills_dir = config.PROJECT_ROOT / "skills"
+        for directory in sorted(path for path in skills_dir.iterdir() if path.is_dir()):
+            if directory.name in active or directory.name.startswith((".", "__")):
+                continue
+            label = "disabled" if (directory / ".disabled").exists() else "load error"
+            output.append(f"  ⚠️ {directory.name} ({label})")
+        return {"message": "\n".join(output)}
+    except Exception as exc:
+        return {"error": f"skills list failed: {exc}"}
 
 
 def enable(args: List[str]) -> Dict[str, Any]:
-    """Enable a skill."""
-    if not args:
-        return {'error': 'Usage: skills enable <name>'}
-    name = args[0]
+    if len(args) != 1:
+        return {"error": "Usage: skills enable <name>"}
+    from core.runtime import get_runtime
 
-    try:
-        from core.novel_context import NovelContext
-        from core.plugin_manager import PluginManager
-        from utils.workspace import WorkspaceManager
-        from utils.config import NOVEL_DIR
-
-        workspace = WorkspaceManager(NOVEL_DIR)
-        context = NovelContext(workspace)
-        mgr = PluginManager(context)
-        mgr.enable_skill(name)
-        return {'message': f'Skill "{name}" enabled.'}
-    except Exception as e:
-        return {'error': f'skills enable failed: {e}'}
+    if not get_runtime().plugin_manager.enable_skill(args[0]):
+        return {"error": f"Skill {args[0]} could not be enabled."}
+    return {"message": f'Skill "{args[0]}" enabled.'}
 
 
 def disable(args: List[str]) -> Dict[str, Any]:
-    """Disable a skill."""
-    if not args:
-        return {'error': 'Usage: skills disable <name>'}
-    name = args[0]
+    if len(args) != 1:
+        return {"error": "Usage: skills disable <name>"}
+    from core.runtime import get_runtime
 
-    try:
-        from core.novel_context import NovelContext
-        from core.plugin_manager import PluginManager
-        from utils.workspace import WorkspaceManager
-        from utils.config import NOVEL_DIR
-
-        workspace = WorkspaceManager(NOVEL_DIR)
-        context = NovelContext(workspace)
-        mgr = PluginManager(context)
-        mgr.disable_skill(name)
-        return {'message': f'Skill "{name}" disabled.'}
-    except Exception as e:
-        return {'error': f'skills disable failed: {e}'}
+    if not get_runtime().plugin_manager.disable_skill(args[0]):
+        return {"error": f"Skill {args[0]} could not be disabled."}
+    return {"message": f'Skill "{args[0]}" disabled.'}
 
 
 def reload(args: List[str]) -> Dict[str, Any]:
-    """Reload skills."""
-    name = args[0] if args else None
+    if len(args) > 1:
+        return {"error": "Usage: skills reload [name]"}
+    from core.runtime import get_runtime
 
-    try:
-        from core.novel_context import NovelContext
-        from core.plugin_manager import PluginManager
-        from utils.workspace import WorkspaceManager
-        from utils.config import NOVEL_DIR
-
-        workspace = WorkspaceManager(NOVEL_DIR)
-        context = NovelContext(workspace)
-        mgr = PluginManager(context)
-
-        if name:
-            mgr.scan_and_load()
-            mgr.hot_reload(name)
-            return {'message': f'Skill "{name}" reloaded.'}
-        else:
-            mgr.scan_and_load()
-            return {'message': f'All skills reloaded. {len(context.active_skills)} skills active.'}
-    except Exception as e:
-        return {'error': f'skills reload failed: {e}'}
+    runtime = get_runtime()
+    if args:
+        if not runtime.plugin_manager.hot_reload(args[0]):
+            return {"error": f"Skill {args[0]} could not be reloaded."}
+    else:
+        runtime.plugin_manager.unload_all()
+        runtime.plugin_manager.scan_and_load()
+    return {"message": f"Loaded {len(runtime.context.active_skills)} skills."}
 
 
 def build(args: List[str]) -> Dict[str, Any]:
-    """Build a new skill from natural language request."""
     if not args:
-        return {'error': 'Usage: skills build <request>'}
-    request = ' '.join(args)
-
+        return {"error": "Usage: skills build <request>"}
     try:
-        from core.novel_context import NovelContext
-        from core.plugin_manager import PluginManager
         from core.agents.skill_builder_agent import SkillBuilderAgent
-        from utils.workspace import WorkspaceManager
-        from utils.config import NOVEL_DIR
+        from core.runtime import get_runtime
 
-        workspace = WorkspaceManager(NOVEL_DIR)
-        context = NovelContext(workspace)
-        mgr = PluginManager(context)
-        mgr.scan_and_load()
-
-        agent = SkillBuilderAgent(context, mgr)
-        success = agent.build_skill(request)
-
-        if success:
-            return {'message': 'Skill built and reloaded successfully.'}
-        return {'error': 'Skill build failed. Check logs for details.'}
-    except Exception as e:
-        return {'error': f'skills build failed: {e}'}
+        runtime = get_runtime()
+        agent = SkillBuilderAgent(runtime.context, runtime.plugin_manager)
+        if agent.build_skill(" ".join(args)):
+            return {"message": "Skill built and reloaded successfully."}
+        return {"error": "Skill build failed. Check logs for details."}
+    except Exception as exc:
+        return {"error": f"skills build failed: {exc}"}

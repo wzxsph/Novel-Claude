@@ -1,189 +1,225 @@
-# 🚀 Novel-Claude V3: Agentic Novel Generation Framework
+# Novel-Claude
+
+[简体中文](README.md) · [English](README_EN.md) · [日本語](README_JP.md)
+
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB)
+![Status](https://img.shields.io/badge/status-learning%20project-orange)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+> [!IMPORTANT]
+> **This is a beginner practice and learning project, not production software.**
+>
+> It exists to explore Python, LLM APIs, CLI/REPL design, agents, and Skill plugins. The code and generated text may contain defects, breaking changes, or unexpected API costs. Do not use it for production or important data, and back up your novel workspace first.
+
+Novel-Claude is an experimental long-form fiction generation framework. It connects world building, volume planning, chapter writing, and memory retrieval through a CLI pipeline. Skills can add context or model tools through an event bus.
+
+The current upstream version is **CLI / interactive REPL only** and does not include a GUI.
+
+## Feature status
+
+| Capability | Status | Notes |
+|---|---|---|
+| One-shot CLI and interactive REPL | Locally smoke-tested | Help, routing, project switching, and history |
+| World building, planning, and chapter writing | Experimental | Requires an OpenAI Chat Completions-compatible service |
+| Skill plugins and hot reload | Experimental | Plugin failures are isolated; review third-party Skills |
+| ChromaDB RAG memory | Experimental | Built-in embeddings require a Zhipu API key |
+| Zhipu Batch API | Experimental | May incur charges; keep the returned Batch ID |
+| AI-generated Skills | High-risk experiment | Generates executable Python; review it before enabling |
+
+## Quick start
+
+Python 3.10+ and [uv](https://docs.astral.sh/uv/) are required.
+
+```bash
+git clone https://github.com/wzxsph/Novel-Claude.git
+cd Novel-Claude
+
+uv venv
+uv pip install -r requirements.txt
+cp env.example env
+```
+
+Edit `env` and configure at least the chat model:
+
+```dotenv
+LLM_PROVIDER=minimax
+LLM_API_KEY=your-key
+LLM_BASE_URL=https://api.minimaxi.com/v1
+MODEL_ID=MiniMax-M2.7
+FLASH_MODEL_ID=MiniMax-M2.7-highspeed
+```
+
+Verify the installation:
+
+```bash
+uv run python cli.py --help
+uv run python cli.py skills list
+uv run python cli.py --interactive
+```
 
 > [!WARNING]
-> **This project is currently in the testing phase. Many features are still incomplete. Please use with caution.**
+> `init`, `plan`, `write`, `review`, RAG, and Batch commands may call paid APIs. Check the model, pricing, quota, and backups first.
 
-Novel-Claude is a fully automated long-form novel generation pipeline built on Large Language Models (such as Zhipu GLM-4). In version V3, it has evolved from a traditional linear script pipeline into a highly extensible **Microkernel & Plugin Architecture**.
+## Configuration
 
-Through the underlying `EventBus` engine and dynamic `PluginManager`, it supports an extremely complex community plugin ecosystem (Skills) and complex agents based on ReAct multi-turn interactions.
+Secrets are read from the root-level `env` file. Non-secret writing defaults live in `config.json`.
 
-## ✨ Core Features
+| Variable | Purpose |
+|---|---|
+| `LLM_PROVIDER` | Provider identifier; use `zhipu` for Zhipu |
+| `LLM_API_KEY` | Generic chat API key |
+| `LLM_BASE_URL` | OpenAI-compatible endpoint |
+| `MODEL_ID` | Primary generation model |
+| `FLASH_MODEL_ID` | Model for small tasks and connectivity checks |
+| `ZHIPU_API_KEY` | Zhipu Batch API and built-in RAG embedding key |
+| `BATCH_MODEL_ID` | Zhipu model used in Batch requests; defaults to `glm-4` |
+| `NOVEL_NAME` | Optional workspace override, producing `.novel_<name>/` |
 
-- **Microkernel Plugin System**: All additional functions (such as dynamic RAG memory, combat rationality detection, etc.) are decoupled from the main timeline as plugins (Skills). It supports Hot-Reload and fault-tolerance isolation, ensuring that a single plugin crash does not affect hours of generation progress.
-- **Complex Agent Support**:
-  - 🖋️ **Editor Agent**: Uses a multi-turn ReAct reasoning loop to strictly review drafts, automatically fixing point-of-view jumps and context fragmentation.
-  - 🤖 **Skill Builder Agent**: System-level Meta-Generation. Enter a line of natural language in the CLI, and the system will **automatically write and compile a valid plugin (Skill)**.
-- **Cost Reduction & Efficiency (Batch API)**: Native support for Zhipu/OpenAI format Batch API pipelines, supporting 50% discount for offline concurrent generation of massive chapters, with automatic merging and callbacks.
+Legacy `MINIMAX_API_KEY`, `MINIMAX_BASE_URL`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_BASE_URL` remain supported as fallbacks. Precedence is generic variables → MiniMax legacy variables → Anthropic legacy variables. Because the runtime uses the OpenAI SDK, the known legacy MiniMax `/anthropic` endpoint is normalized to its OpenAI-compatible `/v1` endpoint.
 
----
+When `LLM_PROVIDER=zhipu`, `LLM_API_KEY` is reused for Zhipu-only features if `ZHIPU_API_KEY` is absent. Keys from other providers are never sent to Zhipu implicitly.
 
-## 🏗️ Architecture Overview
+`LLM_PROVIDER` does not select a chat endpoint or model automatically. `LLM_BASE_URL`, `MODEL_ID`, and the key must belong to the same compatible service.
 
-The entire generation pipeline is divided into three core engines, which share the state via `NovelContext` and communicate through `EventBus` broadcasts:
+## Usage
 
-1. `world_builder.py` (World Creator): Builds strict JSON-formatted background settings, factions, and character lists based on a single-line idea (Logline).
-2. `volume_planner.py` (Volume Planner): Customizes 10-volume outlines and decomposes large volume outlines into precise scene-by-scene beats, with algorithms enforcing a normalized output of 5,000 words per chapter.
-3. `scene_writer.py` (Writing Workshop): Spawns Subagents to execute scene tasks without dead ends, with a final edit by the Editor Agent.
+### CLI / REPL command matrix
 
-```text
-novel_claude/
-├── core/                       # Microkernel Engine
-│   ├── event_bus.py            # Global Event Bus (Fault Tolerance)
-│   ├── plugin_manager.py       # Dynamic Plugin Scanner & Loader
-│   ├── base_skill.py           # V3 Standardized Plugin Base Class
-│   ├── novel_context.py        # Shared Lifecycle Context
-│   └── agents/                 # Complex Reasoning Agents
-│       ├── editor_agent.py     # ReAct Editor Agent
-│       └── skill_builder_agent.py  # Meta-Generation Agent
-├── skills/                     # Plugin Directory
-│   └── core_memory_rag/        # Native RAG Memory Retrieval Plugin
-├── world_builder.py            # Engine 1: Setting Construction
-├── volume_planner.py           # Engine 2: Volume & Scene Segmentation
-├── scene_writer.py             # Engine 3: Scene Writing & Merging
-├── cli.py                      # Terminal Entry
-└── utils/                      # Config & LLM Client API Layer
-```
+| Task | One-shot CLI | Interactive REPL |
+|---|---|---|
+| Full world build | `python cli.py init "A one-line idea"` | `init "A one-line idea"` |
+| Rerun one stage | `python cli.py expand` / `python cli.py world` / `python cli.py blueprint` | `expand` / `world` / `blueprint` |
+| Plan all volumes | `python cli.py plan` | `plan` |
+| Plan one volume | `python cli.py plan 1` or `plan --volume 1` | `plan 1` or `plan --volume 1` |
+| Write chapters | `python cli.py write --volume 1 --chapters 1-5` | `write --volume 1 --chapters 1-5` |
+| Build Batch input | `python cli.py batch-build --volume 1 --chapters 1-5` | `batch build --volume 1 --chapters 1-5` |
+| Submit / sync Batch | `python cli.py batch-submit <file>` / `python cli.py batch-sync <id>` | `batch submit <file>` / `batch sync <id>` |
+| Rebuild RAG | `python cli.py reindex --volume 1 --chapters 1-5` | `reindex --volume 1 --chapters 1-5` |
+| Audit | `python cli.py audit --stage 1` or `--chapter 1` | `audit --stage 1` or `--chapter 1` |
+| Track entities | `python cli.py track --volume 1 --chapter 1` | `track --volume 1 --chapter 1` |
+| Multi-file AI review | `python cli.py review -f <file> -i <request>` | `review -f <file> -i <request>` |
+| Manage Skills | `python cli.py skills <list\|enable\|disable\|reload\|build>` | `skills <list\|enable\|disable\|reload\|build>` |
+| Manage projects | — | `projects <create\|switch\|list\|info\|delete>` |
+| Workspace files | — | `ls` / `cat` / `find` / `cd` / `pwd` |
+| View / change settings | — | `settings show` / `settings set <key> <value>` |
+| REPL controls | — | `/help` / `/history` / `/clear` / `/exit` |
 
----
+### One-shot CLI
 
-## 🛠️ Installation & Usage
-
-### 1. Environment Setup
-Ensure you have Python >= 3.10.
 ```bash
-# Install dependencies
-uv pip install -r requirements.txt
-```
+# Full world pipeline: ability → logline → outline → world → blueprint
+uv run python cli.py init "A story about ..."
 
-### 2. CLI Quick Start
+# Optionally rerun one world-building stage
+uv run python cli.py expand
+uv run python cli.py world
+uv run python cli.py blueprint
 
-#### Basic Generation Flow
-```bash
-# Stage 1: Initialize the worldview with one line
-uv run python cli.py init "A sci-fi turned fantasy story where the protagonist uses cybernetic nodes to force-open his spiritual root in a cultivation world."
-
-# Stage 2: Plan the macro 10-volume main storyline outline
+# Plan all volumes, then volume 1
 uv run python cli.py plan
-
-# Stage 2.5: Generate detailed scene beats for 50 chapters of Volume 1
 uv run python cli.py plan --volume 1
+# Also accepted: uv run python cli.py plan 1
 
-# Stage 3: Start the writing cluster to generate Volume 1, Chapters 1-5
+# Write chapters 1 through 5 of volume 1
 uv run python cli.py write --volume 1 --chapters "1-5"
+
+# Audit and entity tracking
+uv run python cli.py audit --chapter 1
+uv run python cli.py track --volume 1 --chapter 1
 ```
 
-#### Batch API Flow
+Batch workflow:
+
 ```bash
-# Build JSONL request file
-uv run python cli.py batch-build --volume 1 --chapters "1-50"
-
-# Submit async task (returns Batch ID, please keep it safe)
-uv run python cli.py batch-submit .batch/vol_01_ch_1_50_req.jsonl
-
-# Sync and merge results (polls status and auto-downloads)
+uv run python cli.py batch-build --volume 1 --chapters "1-10"
+uv run python cli.py batch-submit <jsonl_path>
 uv run python cli.py batch-sync <batch_id>
 ```
 
-#### V3 Plugin Management Commands
+Skill management:
+
 ```bash
-# List all plugins
 uv run python cli.py skills list
-
-# Disable/Enable a specific plugin (e.g., Gold Finger)
-uv run python cli.py skills disable ext_gold_finger
 uv run python cli.py skills enable ext_gold_finger
-
-# Reload all plugins
-uv run python cli.py skills reload
-
-# Generate a plugin using natural language!
-uv run python cli.py skills build "Help me write a Skill that injects 'The protagonist is very handsome' before every generation"
+uv run python cli.py skills disable ext_gold_finger
+uv run python cli.py skills reload [name]
+uv run python cli.py skills build "Describe the desired plugin"
 ```
 
----
+### Interactive REPL
 
-## 🔌 V3 Plugin Ecosystem
-
-The essence of the V3 engine lies in its endless functional extensibility. All extensions are called `Skills` and must inherit from the `BaseSkill` base class. Plugins are dynamically managed by the `PluginManager` and intercept `EventBus` events throughout the lifecycle.
-
-### Quick Start: Creating a Plugin Manually
-
-1. Create a folder in `skills/`, e.g., `skills/my_awesome_skill/`
-2. Create `skill.py` inside it:
-```python
-from core.base_skill import BaseSkill
-
-class MyAwesomeSkill(BaseSkill):
-    def __init__(self, context):
-        super().__init__(context)
-        self.name = "MyAwesomeSkill"
-
-    def on_init(self):
-        print(f"[{self.name}] Plugin initialized!")
-
-    def on_before_scene_write(self, prompt_payload, beat_data):
-        # Inject custom prompt before each generation
-        prompt_payload.append("\n[System Injection] Note: The protagonist's behavior should be cold and rational.")
-        return prompt_payload
-```
-3. Save and run `uv run python cli.py skills reload`.
-
-### Lifecycle Hooks Overview
-
-| Hook Method | Trigger Timing | Purpose |
-|---------|---------|------|
-| `on_init()` | After plugin load | Initialize resources |
-| `on_volume_planning()` | During volume planning | Intervene/Modify outline |
-| `on_before_scene_write()` | Before scene generation | Inject memory/settings |
-| `on_after_scene_write()` | After scene generation | Statistics/Storage |
-| `on_chapter_render()` | Final chapter rendering | Replace placeholders |
-| `get_llm_tools()` | LLM tool call cycle | Register tools |
-
-### Active Tool Calling
-
-V3 plugins can not only passively inject context but also provide a **toolbox for active operations** to the AI.
-
-1. `get_llm_tools()`: Returns OpenAI-formatted JSON Schema tool definitions.
-2. `execute_tool(tool_name, kwargs)`: Handles the AI's call logic and returns a string result.
-
-**Example: Gold Finger (System Panel)**
-Implemented in `skills/ext_gold_finger/`:
-- **Passive**: Injects protagonist stats (silver, skills) before each chapter.
-- **Active**: Provides the `simplify_skill` tool, allowing the AI to decide to spend "silver" to "simplify" techniques within the story.
-
-### Plugin Toggle Mechanism
-
-The system implements toggle logic by generating a `.disabled` tag file in the plugin folder. Toggle via CLI `skills enable/disable`.
-
-### Auto-Generation (Meta-Generation)
 ```bash
-uv run python cli.py skills build "Write a plugin that checks the rationality of combat descriptions"
+uv run python cli.py --interactive
 ```
-The system will automatically generate code following the standards and apply it via hot-reload.
 
----
+Commands inside the REPL omit `python cli.py`:
 
-## 📂 Directory Structure
+```text
+projects create demo "A one-line idea"
+projects switch demo
+# Return to the default workspace
+projects switch default
+init "A one-line idea"
+plan --volume 1
+batch build --volume 1 --chapters 1-10
+skills list
+/help
+/exit
+```
 
-| Path | Description |
-|------|-------------|
-| `cli.py` | CLI terminal entry point |
-| `world_builder.py` | Worldview initialization engine |
-| `volume_planner.py` | Volume outline planning engine |
-| `scene_writer.py` | Scene writing and merging engine |
-| `core/` | Microkernel core modules |
-| `core/agents/` | Agent implementations |
-| `skills/` | Plugin directory (drop-in生效) |
-| `utils/` | Utilities (LLM client, config, etc.) |
-| `docs/CLI_COMMANDS.md` | Complete CLI command documentation |
+Workspaces live in the repository root: `.novel/` for the default project and `.novel_<name>/` for named projects. REPL state and history are stored in the Git-ignored `.novel_cli_config/` directory.
 
----
+## Architecture
 
-## 📜 Built-in Plugins
+```mermaid
+flowchart LR
+    U["CLI / REPL"] --> R["Shared Runtime"]
+    R --> C["Config and Workspace"]
+    R --> W["World Builder"]
+    R --> P["Volume Planner"]
+    R --> S["Scene Writer"]
+    W --> E["EventBus"]
+    P --> E
+    S --> E
+    E --> K["Skills"]
+    K --> M["RAG / Tools / State"]
+    C --> D[".novel_<name>/"]
+    W --> D
+    P --> D
+    S --> D
+```
 
-| Plugin | Description |
-|--------|-------------|
-| `ext_gold_finger` | Gold Finger plugin |
-| `ext_world_highlight_system` | World highlight system |
-| `ext_handsome_protagonist` | Protagonist halo plugin |
-| `core_memory_rag` | Core memory RAG system |
+```text
+core/                 EventBus, runtime, plugin base, and agents
+cli/                  REPL, routing, project, and settings management
+skills/               Dynamically loaded Skills
+prompts/              World, planning, writing, and audit prompts
+utils/                Config, LLM, Batch, state, and workspace utilities
+world_builder.py      World-building pipeline
+volume_planner.py     Volume, stage, and chapter outlines
+scene_writer.py       Chapter generation, progressive saves, Batch results
+```
+
+## Development and tests
+
+```bash
+python -m compileall -q .
+python -m unittest discover -s tests -v
+uvx ruff check --select E9,F63,F7,F82 .
+```
+
+Mocked tests cover routing, configuration and secret masking, lazy clients, plugin rollback, project switching, idempotent RAG writes, and Batch build, submission, polling, and result parsing. They do not submit a real Batch job.
+
+## Known limitations
+
+- OpenAI-compatible providers differ in streaming, tool-call, and JSON behavior.
+- RAG embeddings and Batch are currently Zhipu-specific and separately billed.
+- Long-form generation is expensive and can produce continuity errors or unsuitable text.
+- Generated Skills are executable Python and must be reviewed manually.
+- This beginner-maintained project may continue to change interfaces and file formats.
+
+Issues and pull requests are welcome, but treat this repository as a learning lab rather than a stable product.
+
+## License
+
+[MIT](LICENSE)

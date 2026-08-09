@@ -2,6 +2,7 @@
 from typing import List, Any, Dict
 import os
 import re
+from pathlib import Path
 
 
 def handle(args: List[str]) -> Dict[str, Any]:
@@ -17,9 +18,9 @@ def perform_multi_file_review_impl(filepaths, instruction):
     print(f"\n[AI Review] Starting review of {len(filepaths)} files...")
     file_contents = {}
     for fp in filepaths:
+        resolved = Path(fp).expanduser().resolve()
         try:
-            with open(fp, "r", encoding="utf-8") as f:
-                file_contents[fp] = f.read()
+            file_contents[resolved] = resolved.read_text(encoding="utf-8")
         except Exception as e:
             print(f"[ERROR] Failed to read file {fp}: {e}")
             return False
@@ -54,20 +55,19 @@ def perform_multi_file_review_impl(filepaths, instruction):
 
         success_count = 0
         for fp, modified_content in matches:
-            fp = fp.strip()
-            if fp in file_contents or os.path.exists(fp):
+            candidate = Path(fp.strip()).expanduser().resolve()
+            if candidate in file_contents:
                 modified_content = modified_content.strip()
                 if modified_content.startswith("```"):
                     m_lines = modified_content.split("\n")
                     if len(m_lines) > 2:
                         modified_content = "\n".join(m_lines[1:-1])
 
-                with open(fp, "w", encoding="utf-8") as f:
-                    f.write(modified_content + "\n")
-                print(f"\n[OK] Modified and saved: {fp}")
+                candidate.write_text(modified_content + "\n", encoding="utf-8")
+                print(f"\n[OK] Modified and saved: {candidate}")
                 success_count += 1
             else:
-                print(f"\n[WARN] Unknown file path in LLM output: {fp}, skipping.")
+                print(f"\n[WARN] Unknown file path in LLM output: {candidate}, skipping.")
 
         print(f"\n[INFO] Review complete! Updated {success_count} files.")
         return True
@@ -98,7 +98,7 @@ def review(args: List[str]) -> Dict[str, Any]:
             instruction = args[i + 1]
             i += 2
         else:
-            i += 1
+            return {'error': f'Unknown or incomplete review argument: {args[i]}'}
 
     if not files or not instruction:
         return {'error': 'Usage: agent review -f <file1> -f <file2> -i <instruction>'}
@@ -106,8 +106,8 @@ def review(args: List[str]) -> Dict[str, Any]:
     # Filter existing files
     valid_files = []
     for f in files:
-        if os.path.exists(f):
-            valid_files.append(f)
+        if Path(f).is_file():
+            valid_files.append(str(Path(f).resolve()))
         else:
             print(f"[WARN] File not found: {f}")
 

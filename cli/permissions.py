@@ -1,8 +1,9 @@
 """Permission system for Novel-Claude CLI."""
+import json
 from enum import Enum
 from pathlib import Path
-import json
-from typing import Optional
+
+from utils import config
 
 # Permission levels
 class PermissionLevel(Enum):
@@ -17,8 +18,19 @@ class PermissionManager:
 
     def __init__(self):
         self.level = PermissionLevel.READ  # Default to READ
-        self.config_file = Path(__file__).parent.parent.parent / ".novel_cli_config" / "permissions.json"
+        self.config_file = (
+            config.PROJECT_ROOT / ".novel_cli_config" / "permissions.json"
+        )
         self._load()
+
+    @staticmethod
+    def _is_in_workspace(path: Path) -> bool:
+        candidate = path if path.is_absolute() else config.PROJECT_ROOT / path
+        try:
+            candidate.resolve().relative_to(Path(config.NOVEL_DIR).resolve())
+            return True
+        except ValueError:
+            return False
 
     def _load(self):
         """Load permissions from config."""
@@ -48,8 +60,7 @@ class PermissionManager:
             return True
         if self.level == PermissionLevel.NONE:
             return False
-        # READ and WRITE can access .novel workspace
-        return str(path).startswith('.novel')
+        return self._is_in_workspace(path)
 
     def can_write(self, path: Path) -> bool:
         """Check if write is allowed for path."""
@@ -57,7 +68,7 @@ class PermissionManager:
             return True
         if self.level in [PermissionLevel.NONE, PermissionLevel.READ]:
             return False
-        return str(path).startswith('.novel')
+        return self._is_in_workspace(path)
 
     def check_read(self, path: Path) -> bool:
         """Raise error if read not allowed."""

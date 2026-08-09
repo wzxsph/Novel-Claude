@@ -5,12 +5,11 @@ Tracks chapter generation state and enables resume from interruption.
 """
 
 import json
-import os
-from pathlib import Path
-from typing import Optional, Dict, List
 from datetime import datetime
-from utils.config import VOLUMES_DIR, MANUSCRIPTS_DIR
-from utils.config_loader import get_config
+from pathlib import Path
+from typing import Dict, List
+
+from utils import config
 
 
 # Chapter states
@@ -58,7 +57,7 @@ class ChapterStateManager:
 
     def __init__(self, volume_id: int):
         self.volume_id = volume_id
-        self.state_file = Path(VOLUMES_DIR) / f"vol_{volume_id:02d}_chapter_states.json"
+        self.state_file = Path(config.VOLUMES_DIR) / f"vol_{volume_id:02d}_chapter_states.json"
         self.chapters: Dict[int, ChapterState] = {}
         self._load()
 

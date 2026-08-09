@@ -12,14 +12,16 @@ Supports:
 
 import re
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List
+
+from utils import config
 
 
 class CardDatabase:
     """Simple card storage mimicking NovelForge's card system."""
 
-    def __init__(self, base_dir: str = ".novel"):
-        self.base_dir = Path(base_dir)
+    def __init__(self, base_dir: str | Path | None = None):
+        self.base_dir = Path(base_dir or config.NOVEL_DIR)
         self.cards: Dict[str, List[dict]] = {}  # card_type -> list of cards
 
     def load_all_cards(self):
@@ -61,7 +63,7 @@ import json
 class ContextAssembler:
     """Assembles context for AI prompts using @DSL syntax."""
 
-    def __init__(self, base_dir: str = ".novel"):
+    def __init__(self, base_dir: str | Path | None = None):
         self.db = CardDatabase(base_dir)
         self.db.load_all_cards()  # Load cards on initialization
         self._cache = {}
@@ -190,14 +192,24 @@ class ContextAssembler:
 
 # Global instance
 _assembler = None
+_assembler_base: Path | None = None
 
 
-def get_assembler(base_dir: str = ".novel") -> ContextAssembler:
+def get_assembler(base_dir: str | Path | None = None) -> ContextAssembler:
     """Get or create global context assembler."""
-    global _assembler
-    if _assembler is None:
-        _assembler = ContextAssembler(base_dir)
+    global _assembler, _assembler_base
+    resolved = Path(base_dir or config.NOVEL_DIR).resolve()
+    if _assembler is None or _assembler_base != resolved:
+        _assembler = ContextAssembler(resolved)
+        _assembler_base = resolved
     return _assembler
+
+
+def reset_assembler() -> None:
+    """Invalidate cached card data after switching workspaces."""
+    global _assembler, _assembler_base
+    _assembler = None
+    _assembler_base = None
 
 
 def assemble_context(template: str, current_card_type: str = None, current_card: dict = None) -> str:

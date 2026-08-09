@@ -14,14 +14,12 @@ Each stage follows NovelForge's rhythm control:
 - Stage 6: Climax & resolution (within volume level)
 """
 
-import os
 import json
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List
 from pydantic import BaseModel, Field
-from utils.config import SETTINGS_DIR, VOLUMES_DIR, MANUSCRIPTS_DIR
+from utils import config
 from utils.llm_client import generate_json
-from core.context_assembler import assemble_context
 
 
 # ============================================================================
@@ -83,14 +81,14 @@ def get_world_context() -> str:
     context = []
     for filename in ["world_rules.json", "power_levels.json", "main_characters.json", "factions.json"]:
         # Legacy file support
-        path = Path(SETTINGS_DIR) / filename
+        path = Path(config.SETTINGS_DIR) / filename
         if path.exists():
             with open(path, 'r', encoding='utf-8') as f:
                 context.append(f"### {filename}\n{f.read()}")
 
     # New card-based files
     for card_type in ["one_sentence", "story_outline", "world_setting", "core_blueprint"]:
-        path = Path(SETTINGS_DIR) / f"{card_type}.json"
+        path = Path(config.SETTINGS_DIR) / f"{card_type}.json"
         if path.exists():
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -102,7 +100,7 @@ def get_world_context() -> str:
 
 def get_core_blueprint() -> dict:
     """Load core blueprint for context."""
-    path = Path(SETTINGS_DIR) / "core_blueprint.json"
+    path = Path(config.SETTINGS_DIR) / "core_blueprint.json"
     if path.exists():
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -145,7 +143,7 @@ def plan_macro_outlines(total_volumes: int = 10):
 
     for vol in data_dict.get("volumes", []):
         vol_id = vol["volume_id"]
-        path = Path(VOLUMES_DIR) / f"vol_{vol_id:02d}_outline.json"
+        path = Path(config.VOLUMES_DIR) / f"vol_{vol_id:02d}_outline.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(vol, f, ensure_ascii=False, indent=2)
@@ -172,7 +170,7 @@ def plan_volume_stages(volume_id: int):
     """
     print(f"[INFO] 启动分卷调度器，目标：第 {volume_id} 卷阶段大纲...")
 
-    vol_path = Path(VOLUMES_DIR) / f"vol_{volume_id:02d}_outline.json"
+    vol_path = Path(config.VOLUMES_DIR) / f"vol_{volume_id:02d}_outline.json"
     if not vol_path.exists():
         print(f"[ERROR] 找不到卷 {volume_id} 的大纲，请先执行宏观规划！")
         return False
@@ -241,7 +239,7 @@ def plan_volume_stages(volume_id: int):
     data_dict = data if isinstance(data, dict) else data.model_dump()
 
     # Save volume stages
-    vol_stages_dir = Path(VOLUMES_DIR) / f"vol_{volume_id:02d}_stages"
+    vol_stages_dir = Path(config.VOLUMES_DIR) / f"vol_{volume_id:02d}_stages"
     vol_stages_dir.mkdir(parents=True, exist_ok=True)
 
     for stage in data_dict.get("stages", []):
@@ -251,7 +249,7 @@ def plan_volume_stages(volume_id: int):
             json.dump(stage, f, ensure_ascii=False, indent=2)
 
         # Also create individual chapter outline files for each stage
-        chapter_dir = Path(VOLUMES_DIR) / f"vol_{volume_id:02d}_chapters"
+        chapter_dir = Path(config.VOLUMES_DIR) / f"vol_{volume_id:02d}_chapters"
         chapter_dir.mkdir(parents=True, exist_ok=True)
 
         for ch_outline in stage.get("chapter_outline_list", []):
@@ -276,6 +274,5 @@ def plan_macro_outlines_alias(total_volumes: int = 10):
 
 def run_volume_planner(volume_id: int = None):
     if volume_id is None:
-        plan_macro_outlines()
-    else:
-        plan_volume_stages(volume_id)
+        return plan_macro_outlines()
+    return plan_volume_stages(volume_id)

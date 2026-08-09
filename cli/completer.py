@@ -1,9 +1,9 @@
 """Autocompletion for Novel-Claude CLI."""
-from typing import List, Callable
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.document import Document
 
 from cli.project_manager import project_manager
+from utils import config
 
 
 class NovelClaudeCompleter(Completer):
@@ -20,9 +20,9 @@ class NovelClaudeCompleter(Completer):
             'projects list', 'projects info', 'projects delete',
 
             # Novel workflow
-            'init', 'plan', 'write',
+            'init', 'expand', 'world', 'blueprint', 'plan', 'write',
             'batch build', 'batch submit', 'batch sync',
-            'reindex', 'review',
+            'reindex', 'review', 'audit', 'track',
 
             # File operations
             'ls', 'cat', 'find', 'cd', 'pwd',
@@ -38,9 +38,6 @@ class NovelClaudeCompleter(Completer):
             'agent', 'agent review',
         ]
 
-        # Add project names as completions
-        self.project_names = project_manager.list_projects()
-
     def get_completions(self, document: Document, complete_event):
         """Generate completions based on current input."""
         word = document.get_word_before_cursor()
@@ -48,7 +45,7 @@ class NovelClaudeCompleter(Completer):
 
         # Check if in project name context
         if text.startswith('projects switch '):
-            for proj in self.project_names:
+            for proj in project_manager.list_projects():
                 if proj.startswith(word):
                     yield Completion(proj, start_position=-len(word))
 
@@ -67,7 +64,7 @@ class NovelClaudeCompleter(Completer):
             # Also complete skill names
             if text.startswith('skills enable ') or text.startswith('skills disable '):
                 skill_name = word
-                skills_dir = 'skills'
+                skills_dir = str(config.PROJECT_ROOT / 'skills')
                 import os
                 if os.path.exists(skills_dir):
                     for d in os.listdir(skills_dir):

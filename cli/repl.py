@@ -1,6 +1,4 @@
 """Interactive REPL for Novel-Claude CLI."""
-import os
-import sys
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import FileHistory
@@ -10,11 +8,12 @@ from prompt_toolkit.key_binding import KeyBindings
 from cli.dispatcher import CommandDispatcher
 from cli.project_manager import project_manager
 from cli.completer import NovelClaudeCompleter
+from utils import config
 
 
 def get_prompt() -> FormattedText:
     """Generate the prompt string based on current context."""
-    project = project_manager.current_project or "none"
+    project = project_manager.current_project or "default"
     vol = project_manager.current_volume
     ch = project_manager.current_chapter
 
@@ -48,7 +47,9 @@ class REPL:
 
     def __init__(self):
         self.dispatcher = CommandDispatcher()
-        self.history = FileHistory(os.path.expanduser("~/.novel_claude_history"))
+        history_path = config.PROJECT_ROOT / ".novel_cli_config" / "history"
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        self.history = FileHistory(str(history_path))
         self.completer = NovelClaudeCompleter()
         self.session = PromptSession(
             history=self.history,
@@ -114,9 +115,10 @@ class REPL:
 
             if result.get('error'):
                 self.print_error(result['error'])
-            elif result.get('message'):
+                continue
+            if result.get('message'):
                 print(result['message'])
-            elif result.get('output'):
+            if result.get('output'):
                 print(result['output'])
 
         # Save state on exit
@@ -137,15 +139,14 @@ Built-in:
 Project Management:
   projects create <name> <logline>  - Create a new project
   projects switch <name>           - Switch to a project
+  projects switch default          - Return to the default workspace
   projects list                     - List all projects
   projects info                     - Show current project info
   projects delete <name>            - Delete a project
 
 Novel Workflow (Snowflake Method):
-  init <logline>                    - Initialize world (goldfinger → one_sentence)
-  expand                            - Expand to story outline
-  world                             - Design world setting
-  blueprint                        - Generate core blueprint (characters, scenes, orgs)
+  init <logline>                    - Run the complete world-building pipeline
+  expand / world / blueprint       - Re-run one world-building stage
   plan [volume]                     - Generate volume outlines (10 volumes)
   plan --volume N                   - Generate stage outlines for volume N
   write --volume N --chapters X-Y  - Write chapters
@@ -153,7 +154,8 @@ Novel Workflow (Snowflake Method):
   audit --chapter N                 - Audit chapter consistency
   track --volume N --chapter M      - Track entity state changes
   reindex --volume N --chapters X-Y - Reindex chapters to RAG
-  batch build/submit/sync           - Batch API workflow
+  batch build --volume N --chapters X-Y
+  batch submit <jsonl> / batch sync <id>
 
 File Operations:
   ls [path]                          - List directory
@@ -182,5 +184,8 @@ Note: Commands can also be used without '/' prefix.
 
 def start_repl():
     """Entry point to start the REPL."""
+    from core.runtime import get_runtime
+
+    get_runtime()
     repl = REPL()
     repl.run()

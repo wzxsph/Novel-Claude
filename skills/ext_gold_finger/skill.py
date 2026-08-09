@@ -1,5 +1,5 @@
 import json
-import os
+import shutil
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -16,11 +16,18 @@ class GoldFingerSkill(BaseSkill):
         super().__init__(context)
         self.name = "GoldFingerSystem"
         
-        # 插件私有状态存储路径，存放于 .novel/skills_data/gold_finger.json
-        self.state_path = Path(context.workspace.base_dir) / ".novel" / "skills_data" / "gold_finger.json"
+        # 插件私有状态直接存放在当前工作区的 skills_data 中。
+        workspace = Path(context.workspace.base_dir)
+        self.state_path = workspace / "skills_data" / "gold_finger.json"
+        self.legacy_state_path = (
+            workspace / ".novel" / "skills_data" / "gold_finger.json"
+        )
 
     def on_init(self) -> None:
         """插件初始化，如果不存在存档则建立初始状态"""
+        if not self.state_path.exists() and self.legacy_state_path.exists():
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self.legacy_state_path, self.state_path)
         if not self.state_path.exists():
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
             initial_state = {

@@ -2,6 +2,8 @@ import threading
 import json
 from pathlib import Path
 
+from utils import config
+
 class WorkspaceManager:
     """Provides thread-safe file operations for the .novel workspace to support high concurrency."""
     def __init__(self, base_dir=".novel"):
@@ -45,4 +47,6 @@ class WorkspaceManager:
                     return f.read()
             return ""
 
-workspace = WorkspaceManager()
+def get_workspace() -> WorkspaceManager:
+    """Return a manager for the currently active workspace."""
+    return WorkspaceManager(config.NOVEL_DIR)
