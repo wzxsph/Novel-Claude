@@ -13,13 +13,13 @@ import os
 import json
 import re
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Tuple
-from utils.config import SETTINGS_DIR, VOLUMES_DIR, MANUSCRIPTS_DIR
+from typing import Dict, List, Optional
+from utils import config
 from utils.config_loader import get_config
 from utils.llm_client import ProgressiveWriter, generate_stream
-from core.context_assembler import assemble_context, get_assembler
 from core.event_bus import event_bus
-from utils.chapter_state import get_state_manager, STATE_PENDING, STATE_GENERATING, STATE_COMPLETED, STATE_FAILED
+from core.runtime import get_runtime
+from utils.chapter_state import STATE_COMPLETED, STATE_PENDING, get_state_manager
 
 
 # ============================================================================
@@ -28,7 +28,7 @@ from utils.chapter_state import get_state_manager, STATE_PENDING, STATE_GENERATI
 
 def load_chapter_outline(volume_id: int, chapter_id: int) -> Optional[dict]:
     """Load chapter outline from vol_NN_chapters/ch_XXX_outline.json"""
-    path = Path(VOLUMES_DIR) / f"vol_{volume_id:02d}_chapters" / f"ch_{chapter_id:03d}_outline.json"
+    path = Path(config.VOLUMES_DIR) / f"vol_{volume_id:02d}_chapters" / f"ch_{chapter_id:03d}_outline.json"
     if path.exists():
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -37,7 +37,7 @@ def load_chapter_outline(volume_id: int, chapter_id: int) -> Optional[dict]:
 
 def load_volume_outline(volume_id: int) -> Optional[dict]:
     """Load volume outline from volumes/vol_XX_outline.json"""
-    path = Path(VOLUMES_DIR) / f"vol_{volume_id:02d}_outline.json"
+    path = Path(config.VOLUMES_DIR) / f"vol_{volume_id:02d}_outline.json"
     if path.exists():
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -49,7 +49,7 @@ def load_previous_chapter(volume_id: int, chapter_id: int) -> Optional[str]:
     if chapter_id <= 1:
         return None
     prev_chars = get_config("writing.previous_chapter_chars", 2000)
-    path = Path(MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{chapter_id-1:03d}_final.md"
+    path = Path(config.MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{chapter_id-1:03d}_final.md"
     if path.exists():
         with open(path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -72,7 +72,7 @@ def load_history_chapters(volume_id: int, chapter_id: int, count: int = None) ->
         prev_id = chapter_id - i
         if prev_id < 1:
             break
-        path = Path(MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{prev_id:03d}_final.md"
+        path = Path(config.MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{prev_id:03d}_final.md"
         if path.exists():
             with open(path, 'r', encoding='utf-8') as f:
                 # Get key plot points from each chapter (first 200 and last 500 chars)
@@ -86,7 +86,7 @@ def load_history_chapters(volume_id: int, chapter_id: int, count: int = None) ->
 
 def load_next_chapter_outline(volume_id: int, chapter_id: int) -> Optional[dict]:
     """Load next chapter outline for continuity check."""
-    path = Path(VOLUMES_DIR) / f"vol_{volume_id:02d}_chapters" / f"ch_{chapter_id+1:03d}_outline.json"
+    path = Path(config.VOLUMES_DIR) / f"vol_{volume_id:02d}_chapters" / f"ch_{chapter_id+1:03d}_outline.json"
     if path.exists():
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -101,7 +101,7 @@ def load_entity_cards(entity_names: List[str]) -> Dict[str, List[dict]]:
         "organizations": []
     }
 
-    blueprint_path = Path(SETTINGS_DIR) / "core_blueprint.json"
+    blueprint_path = Path(config.SETTINGS_DIR) / "core_blueprint.json"
     if not blueprint_path.exists():
         return result
 
@@ -131,7 +131,7 @@ def load_entity_cards(entity_names: List[str]) -> Dict[str, List[dict]]:
 
 def load_world_setting() -> dict:
     """Load world setting for context."""
-    path = Path(SETTINGS_DIR) / "world_setting.json"
+    path = Path(config.SETTINGS_DIR) / "world_setting.json"
     if path.exists():
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -140,7 +140,7 @@ def load_world_setting() -> dict:
 
 def load_writing_guide(volume_id: int) -> Optional[str]:
     """Load writing guide for the volume if exists."""
-    path = Path(VOLUMES_DIR) / f"vol_{volume_id:02d}_writing_guide.json"
+    path = Path(config.VOLUMES_DIR) / f"vol_{volume_id:02d}_writing_guide.json"
     if path.exists():
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -153,6 +153,8 @@ def generate_chapter_content(volume_id: int, chapter_id: int, state_manager=None
     Generate chapter content from chapter outline using @DSL context injection.
     Supports progressive saving via state_manager.
     """
+    runtime = get_runtime()
+    runtime.context.set_current_ids(volume_id, chapter_id)
     print(f"\n[INFO] 正在生成第 {volume_id} 卷第 {chapter_id} 章...")
 
     # Load chapter outline
@@ -210,20 +212,25 @@ def generate_chapter_content(volume_id: int, chapter_id: int, state_manager=None
         prompt_parts.append(f"【写作指南】:\n{writing_guide}\n")
 
     prompt_parts.append(
-        f"【写作要求】:\n"
-        f"1. 必须以【章节标题】作为正文第一行（格式：# 第X章 标题名）\n"
-        f"2. 开头必须承接【前章结尾】的剧情和情绪，不能突兀跳到新场景\n"
-        f"3. 严格按照章节大纲展开剧情，但要在细节上与历史章节呼应\n"
-        f"4. 参与者只能使用提供的角色、场景、组织\n"
-        f"5. 字数约6000字，不要过度水字数\n"
-        f"6. 直接输出小说正文，不要分析或总结\n\n"
-        f"请开始写作：\n"
+        "【写作要求】:\n"
+        "1. 必须以【章节标题】作为正文第一行（格式：# 第X章 标题名）\n"
+        "2. 开头必须承接【前章结尾】的剧情和情绪，不能突兀跳到新场景\n"
+        "3. 严格按照章节大纲展开剧情，但要在细节上与历史章节呼应\n"
+        "4. 参与者只能使用提供的角色、场景、组织\n"
+        "5. 字数约6000字，不要过度水字数\n"
+        "6. 直接输出小说正文，不要分析或总结\n\n"
+        "请开始写作：\n"
     )
 
     prompt = "\n".join(prompt_parts)
 
     # Emit hook for skill injection
-    beat_data = {"chapter_id": chapter_id, "title": chapter_title, "overview": overview}
+    beat_data = {
+        "chapter_id": chapter_id,
+        "title": chapter_title,
+        "overview": overview,
+        "plot_summary": overview,
+    }
     prompt_parts = [prompt]
     prompt_parts = event_bus.emit_pipeline("on_before_scene_write", prompt_parts, beat_data)
     prompt = "\n".join(prompt_parts)
@@ -233,14 +240,15 @@ def generate_chapter_content(volume_id: int, chapter_id: int, state_manager=None
         if state_manager and ch_id:
             state_manager.update_progress(ch_id, char_count)
             # Save to temp file
-            temp_path = Path(MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{ch_id:03d}_temp.md"
+            temp_path = Path(config.MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{ch_id:03d}_temp.md"
             temp_path.parent.mkdir(parents=True, exist_ok=True)
             with open(temp_path, 'w', encoding='utf-8') as f:
                 f.write(accumulated)
 
     # Generate content with progressive saving
     writer = ProgressiveWriter(on_progress=on_progress, chunk_size=get_config("writing.progress_chunk_size", 1000))
-    content = writer.write(prompt, chapter_id=chapter_id)
+    tools = event_bus.collect("get_llm_tools")
+    content = writer.write(prompt, chapter_id=chapter_id, tools=tools or None)
 
     return content
 
@@ -271,7 +279,7 @@ def review_chapter_content(volume_id: int, chapter_id: int, content: str, outlin
             content = f"# 第{chapter_id}章 {chapter_title}\n\n{content}"
             issues.append(f"[审阅] 缺少章节标题，已自动添加：第{chapter_id}章 {chapter_title}")
         else:
-            issues.append(f"[审阅] 缺少章节标题")
+            issues.append("[审阅] 缺少章节标题")
 
     # Check word count (code-based)
     if word_count_check:
@@ -372,7 +380,7 @@ def deep_review_chapter(content: str, outline: dict, entity_list: List[str]) -> 
 
 def save_chapter_content(volume_id: int, chapter_id: int, content: str, outline: dict = None):
     """Save chapter content to file, with review."""
-    save_dir = Path(MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}"
+    save_dir = Path(config.MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}"
     save_dir.mkdir(parents=True, exist_ok=True)
 
     # Load outline if not provided
@@ -418,6 +426,8 @@ def run_scene_writer(volume_id: int, start_chapter: int, end_chapter: int):
     Generates chapters from start_chapter to end_chapter.
     Uses state machine for progress tracking and supports resume from interruption.
     """
+    config.ensure_workspace_dirs()
+    runtime = get_runtime()
     state_manager = get_state_manager(volume_id)
     completed = 0
     failed = 0
@@ -427,7 +437,7 @@ def run_scene_writer(volume_id: int, start_chapter: int, end_chapter: int):
         state = state_manager.get_state(chapter_id)
         if state.state == STATE_COMPLETED:
             # Check if file actually exists
-            save_path = Path(MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{chapter_id:03d}_final.md"
+            save_path = Path(config.MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{chapter_id:03d}_final.md"
             if save_path.exists() and save_path.stat().st_size > 1000:
                 print(f"[Skip] 第 {chapter_id} 章已完成，跳过")
                 continue
@@ -436,16 +446,17 @@ def run_scene_writer(volume_id: int, start_chapter: int, end_chapter: int):
                 state.state = STATE_PENDING
 
     for chapter_id in range(start_chapter, end_chapter + 1):
+        runtime.context.set_current_ids(volume_id, chapter_id)
         state = state_manager.get_state(chapter_id)
 
         # Skip if already completed
-        save_path = Path(MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{chapter_id:03d}_final.md"
+        save_path = Path(config.MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{chapter_id:03d}_final.md"
         if save_path.exists() and save_path.stat().st_size > 1000:
             print(f"[Skip] 第 {chapter_id} 章已存在，跳过")
             continue
 
         # Check for temp file (resume from interruption)
-        temp_path = Path(MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{chapter_id:03d}_temp.md"
+        temp_path = Path(config.MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{chapter_id:03d}_temp.md"
         if temp_path.exists():
             print(f"[Resume] 检测到第 {chapter_id} 章的临时文件，将继续生成")
             # Delete temp file to restart fresh
@@ -499,8 +510,9 @@ def run_scene_writer(volume_id: int, start_chapter: int, end_chapter: int):
 
     print(f"\n{'='*60}")
     print(f"[INFO] 本批次生成完成：成功 {completed} 章，失败 {failed} 章")
-    print(f"[INFO] 可通过重新运行命令继续生成失败的章节")
+    print("[INFO] 可通过重新运行命令继续生成失败的章节")
     print(f"{'='*60}")
+    return completed, failed
 
 
 # ============================================================================
@@ -513,7 +525,7 @@ def continue_chapter(volume_id: int, chapter_id: int, target_words: int = 3000) 
     Used for continuation mode similar to NovelForge's extension feature.
     """
     # Load current chapter content
-    path = Path(MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{chapter_id:03d}_final.md"
+    path = Path(config.MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{chapter_id:03d}_final.md"
     if not path.exists():
         print(f"[ERROR] 找不到章节文件: {path}")
         return ""
@@ -536,7 +548,7 @@ def continue_chapter(volume_id: int, chapter_id: int, target_words: int = 3000) 
     # Build continuation prompt
     prompt_parts = [
         f"【当前章节内容】:\n{current_content[-1000:]}\n",
-        f"【章节大纲】:\n{outline.get('overview', '')}\n",
+        f"【章节大纲】:\n{outline.get('overview', '') if outline else ''}\n",
     ]
 
     if next_outline:
@@ -601,18 +613,21 @@ def generate_batch_jsonl(volume_id: int, start_chap: int, end_chap: int, output_
             "method": "POST",
             "url": "/v4/chat/completions",
             "body": {
-                "model": "glm-4",
+                "model": config.BATCH_MODEL_ID,
                 "messages": [{"role": "user", "content": "\n".join(prompt_parts)}],
                 "temperature": 0.85
             }
         }
         requests.append(request_obj)
 
-    with open(output_jsonl, 'w', encoding='utf-8') as f:
+    output_path = Path(output_jsonl)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open('w', encoding='utf-8') as f:
         for req in requests:
             f.write(json.dumps(req, ensure_ascii=False) + "\n")
 
     print(f"[✓] 已生成包含 {len(requests)} 个请求的 Batch 文件: {output_jsonl}")
+    return len(requests)
 
 
 def process_batch_results(result_jsonl: str):
@@ -645,8 +660,7 @@ def process_batch_results(result_jsonl: str):
 
 def get_world_context() -> str:
     """Get world context for backward compatibility."""
-    from core.context_assembler import assemble_context
-    path = Path(SETTINGS_DIR) / "world_setting.json"
+    path = Path(config.SETTINGS_DIR) / "world_setting.json"
     if path.exists():
         with open(path, 'r', encoding='utf-8') as f:
             return f.read()

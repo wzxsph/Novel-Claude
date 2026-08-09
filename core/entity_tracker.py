@@ -14,9 +14,9 @@ After each chapter:
 
 import json
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel
-from utils.config import SETTINGS_DIR, VOLUMES_DIR, MANUSCRIPTS_DIR
+from utils import config
 from utils.llm_client import generate_json
 
 
@@ -50,7 +50,7 @@ class EntityStateSnapshotSchema(BaseModel):
 
 def load_core_blueprint() -> dict:
     """Load core blueprint for entity information."""
-    path = Path(SETTINGS_DIR) / "core_blueprint.json"
+    path = Path(config.SETTINGS_DIR) / "core_blueprint.json"
     if path.exists():
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -116,7 +116,7 @@ def load_current_entity_states() -> dict:
 
 def save_entity_states(states: dict):
     """Save updated entity states back to core_blueprint.json."""
-    blueprint_path = Path(SETTINGS_DIR) / "core_blueprint.json"
+    blueprint_path = Path(config.SETTINGS_DIR) / "core_blueprint.json"
     if not blueprint_path.exists():
         return False
 
@@ -286,7 +286,7 @@ def track_chapter_entities(volume_id: int, chapter_id: int):
     Track entity states for a chapter that was just written.
     Load chapter content, analyze changes, update entity cards.
     """
-    chapter_path = Path(MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{chapter_id:03d}_final.md"
+    chapter_path = Path(config.MANUSCRIPTS_DIR) / f"vol_{volume_id:02d}" / f"ch_{chapter_id:03d}_final.md"
     if not chapter_path.exists():
         print(f"[WARN] 找不到章节文件: {chapter_path}")
         return

@@ -10,12 +10,17 @@ from zhipuai import ZhipuAI
 
 from core.base_skill import BaseSkill
 from core.novel_context import NovelContext
-from utils.config import MEMORY_DIR, SETTINGS_DIR, ANTHROPIC_API_KEY, register_background_task
-from utils.llm_client import client as llm_client, MODEL_ID
+from utils import config
+from utils.llm_client import get_client
 
 class ZhipuEmbeddingFunction(embedding_functions.EmbeddingFunction):
     def __init__(self):
-        self.client = ZhipuAI(api_key=ANTHROPIC_API_KEY)
+        if not config.ZHIPU_API_KEY:
+            raise RuntimeError(
+                "CoreMemoryRagSkill 需要 ZHIPU_API_KEY；"
+                "当 LLM_PROVIDER=zhipu 时也可复用 LLM_API_KEY。"
+            )
+        self.client = ZhipuAI(api_key=config.ZHIPU_API_KEY)
         
     def __call__(self, input: list[str]) -> list[list[float]]:
         embeddings = []
@@ -37,7 +42,7 @@ class CoreMemoryRagSkill(BaseSkill):
         self.automaton = None
 
     def on_init(self) -> None:
-        self.chroma_client = chromadb.PersistentClient(path=MEMORY_DIR)
+        self.chroma_client = chromadb.PersistentClient(path=config.MEMORY_DIR)
         emb_fn = ZhipuEmbeddingFunction()
         self.collection = self.chroma_client.get_or_create_collection(name="novel_memory", embedding_function=emb_fn)
         self.automaton = self._build_entity_automaton()
@@ -46,14 +51,14 @@ class CoreMemoryRagSkill(BaseSkill):
         A = ahocorasick.Automaton()
         entities = []
         
-        char_path = os.path.join(SETTINGS_DIR, "main_characters.json")
+        char_path = os.path.join(config.SETTINGS_DIR, "main_characters.json")
         if os.path.exists(char_path):
             with open(char_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 for c in data.get("characters", []):
                     entities.append(c["name"])
                     
-        fac_path = os.path.join(SETTINGS_DIR, "factions.json")
+        fac_path = os.path.join(config.SETTINGS_DIR, "factions.json")
         if os.path.exists(fac_path):
             with open(fac_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -76,7 +81,11 @@ class CoreMemoryRagSkill(BaseSkill):
     def _condense_state(self, entity: str, context_chunks: list[str]) -> str:
         prompt = f"你是一个情报总结官。根据以下小说文本片段，极简总结实体【{entity}】的最新状态（例如：伤势、法宝受损情况、对其余人物的恨意等）。不要编造，如果文本没提就回复“状态正常”。\n\n" + "\n\n---\n\n".join(context_chunks)
         messages = [{"role": "user", "content": prompt}]
-        res = llm_client.chat.completions.create(model=MODEL_ID, messages=messages, temperature=0.1)
+        res = get_client().chat.completions.create(
+            model=config.MODEL_ID,
+            messages=messages,
+            temperature=0.1,
+        )
         return res.choices[0].message.content.strip()
 
     def on_before_scene_write(self, prompt_payload: List[str], beat_data: dict) -> List[str]:
@@ -118,9 +127,9 @@ class CoreMemoryRagSkill(BaseSkill):
         return prompt_payload
 
     def on_after_scene_write(self, beat_data: dict, raw_text: str) -> None:
-        chapter_id = self.context.current_chapter_id
+        chapter_id = int(beat_data.get("chapter_id") or self.context.current_chapter_id)
         # 使用 EventBus 触发后台记录
-        register_background_task(self._background_update_task, chapter_id, raw_text)
+        config.register_background_task(self._background_update_task, chapter_id, raw_text)
 
     def chunk_text(self, text: str) -> list[str]:
         raw_chunks = re.split(r'\*\*\*|\n\s*\n', text)
@@ -163,7 +172,7 @@ class CoreMemoryRagSkill(BaseSkill):
                 })
                     
             if documents:
-                self.collection.add(
+                self.collection.upsert(
                     ids=ids,
                     documents=documents,
                     metadatas=metadatas

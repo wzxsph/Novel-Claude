@@ -1,6 +1,10 @@
 import json
 import os
-from utils.llm_client import client, MODEL_ID
+import re
+from pathlib import Path
+
+from utils import config
+from utils.llm_client import get_client
 from core.novel_context import NovelContext
 from core.plugin_manager import PluginManager
 
@@ -18,7 +22,7 @@ class SkillBuilderAgent:
         # 读取规范文档作为核心知识
         prompt = "你是 Novel-Claude V3 系统的核心插件架构师。你的任务是根据用户的需求，编写合规的 Python 插件代码（BaseSkill 的子类）。\n\n"
         try:
-            template_path = "reference/Skill与Agent开发模板规范.md"
+            template_path = config.PROJECT_ROOT / "reference" / "Skill与Agent开发模板规范.md"
             if os.path.exists(template_path):
                 with open(template_path, "r", encoding="utf-8") as f:
                     prompt += "【开发规范与模板如下】：\n" + f.read() + "\n\n"
@@ -49,6 +53,17 @@ class SkillBuilderAgent:
             }
         }]
 
+    @staticmethod
+    def _resolve_skill_dir(folder_name: str) -> Path:
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", folder_name or ""):
+            raise ValueError(
+                "skill_folder_name 只能使用小写字母、数字和下划线，且必须以字母开头"
+            )
+        skills_root = (config.PROJECT_ROOT / "skills").resolve()
+        candidate = (skills_root / folder_name).resolve()
+        candidate.relative_to(skills_root)
+        return candidate
+
     def build_skill(self, user_request: str) -> bool:
         print(f"\\n[🤖 {self.name}] 正在分析您的需求，构思插件逻辑...")
         
@@ -57,8 +72,8 @@ class SkillBuilderAgent:
             {"role": "user", "content": f"请为我开发一个外挂插件。需求:\n{user_request}\n\n完成后请调用 save_skill_code 工具写入系统。"}
         ]
         
-        response = client.chat.completions.create(
-            model=MODEL_ID,
+        response = get_client().chat.completions.create(
+            model=config.MODEL_ID,
             messages=messages,
             tools=self.get_tools(),
             temperature=0.2
@@ -75,7 +90,11 @@ class SkillBuilderAgent:
                 readme = args.get('readme_content', f"# {folder_name}\\n\\n自动生成的插件说明。")
                 
                 # 写入代码
-                skill_dir = os.path.abspath(f"skills/{folder_name}")
+                try:
+                    skill_dir = str(self._resolve_skill_dir(folder_name))
+                except ValueError as exc:
+                    print(f"[ERROR] 拒绝不安全的插件目录名: {exc}")
+                    return False
                 os.makedirs(skill_dir, exist_ok=True)
                 
                 # 创建 README.md
@@ -94,8 +113,7 @@ class SkillBuilderAgent:
                 print(f"[✓] 插件代码已生成并写入: {skill_file}")
                 
                 # 热更新加载
-                self.plugin_mgr.hot_reload(folder_name)
-                return True
+                return self.plugin_mgr.hot_reload(folder_name)
                 
         print(f"[❌] 开发失败，大模型未能调用正确的代码保存工具。模型输出:\n{msg.content}")
         return False

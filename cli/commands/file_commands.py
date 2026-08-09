@@ -7,19 +7,26 @@ from cli.project_manager import project_manager
 
 def _get_project_root() -> Path:
     """Get the current project root directory."""
-    if project_manager.current_project:
-        return project_manager.get_project_dir()
-    # Fall back to current working directory
-    return Path.cwd()
+    return project_manager.get_project_dir()
+
+
+def _resolve_in_project(path: str) -> Path:
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = project_manager.current_path / candidate
+    candidate = candidate.resolve()
+    try:
+        candidate.relative_to(_get_project_root().resolve())
+    except ValueError as exc:
+        raise ValueError("Path must stay inside the active novel workspace.") from exc
+    return candidate
 
 
 def ls(args: List[str]) -> Dict[str, Any]:
     """List directory contents."""
     path = args[0] if args else "."
     try:
-        full_path = Path(path)
-        if not full_path.is_absolute():
-            full_path = project_manager.current_path / path
+        full_path = _resolve_in_project(path)
 
         if not full_path.exists():
             return {'error': f'Path does not exist: {path}'}
@@ -43,11 +50,12 @@ def cat(args: List[str]) -> Dict[str, Any]:
     if not args:
         return {'error': 'Usage: cat <file>'}
 
-    filepath = Path(args[0])
-    if not filepath.is_absolute():
-        filepath = project_manager.current_path / filepath
+    try:
+        filepath = _resolve_in_project(args[0])
+    except ValueError as exc:
+        return {'error': str(exc)}
 
-    if not filepath.exists():
+    if not filepath.is_file():
         return {'error': f'File not found: {filepath}'}
 
     try:
@@ -86,17 +94,11 @@ def cd(args: List[str]) -> Dict[str, Any]:
     """Change current directory."""
     if not args:
         project_manager.current_path = _get_project_root()
+        project_manager._save_state()
         return {'message': f'Changed to project root: {project_manager.current_path}'}
 
     path = args[0]
-    if path == '..':
-        parent = project_manager.current_path.parent
-        project_manager.current_path = parent
-        return {'message': f'Changed to: {parent}'}
-
-    new_path = project_manager.current_path / path
-    if new_path.exists() and new_path.is_dir():
-        project_manager.current_path = new_path.resolve()
+    if project_manager.cd(path):
         return {'message': f'Changed to: {project_manager.current_path}'}
     return {'error': f'Directory not found: {path}'}
 

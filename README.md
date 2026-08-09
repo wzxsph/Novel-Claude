@@ -1,196 +1,225 @@
-# 🚀 Novel-Claude V3: Agentic Novel Generation Framework
+# Novel-Claude
 
-[简体中文](README.md) | [English](README_EN.md) | [日本語](README_JP.md)
+[简体中文](README.md) · [English](README_EN.md) · [日本語](README_JP.md)
+
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB)
+![Status](https://img.shields.io/badge/status-learning%20project-orange)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+> [!IMPORTANT]
+> **这是一个新手练手与学习实验作品，不是生产级软件。**
+>
+> 项目用于学习 Python、LLM API、CLI/REPL、Agent 与 Skill 插件架构。代码和生成结果可能存在缺陷、破坏性变更或额外 API 费用。请勿直接用于生产环境或重要数据，并在操作前备份小说工作区。
+
+Novel-Claude 是一个实验性的长篇小说生成框架。它将世界构建、分卷规划、章节写作和记忆检索组织成一条 CLI 流程，并允许 Skill 通过事件总线注入上下文或工具。
+
+当前上游版本为 **CLI / 交互式 REPL** 架构，不包含 GUI。
+
+## 功能状态
+
+| 能力 | 状态 | 说明 |
+|---|---|---|
+| 单次 CLI 与交互式 REPL | 已做本地冒烟测试 | 支持帮助、命令路由、项目切换与历史记录 |
+| 世界构建、分卷规划、章节写作 | 实验性 | 需要兼容 OpenAI Chat Completions 的模型服务 |
+| Skill 插件与热重载 | 实验性 | 插件错误会被隔离，仍建议审查第三方 Skill |
+| ChromaDB RAG 记忆 | 实验性 | 内置嵌入实现需要智谱密钥 |
+| 智谱 Batch API | 实验性 | 可能产生费用，提交后需保存 Batch ID |
+| AI 自动生成 Skill | 高风险实验 | 会生成并写入 Python 代码，使用前请人工审查 |
+
+## 快速开始
+
+需要 Python 3.10+ 和 [uv](https://docs.astral.sh/uv/)。
+
+```bash
+git clone https://github.com/wzxsph/Novel-Claude.git
+cd Novel-Claude
+
+uv venv
+uv pip install -r requirements.txt
+cp env.example env
+```
+
+编辑 `env`，至少配置聊天模型：
+
+```dotenv
+LLM_PROVIDER=minimax
+LLM_API_KEY=your-key
+LLM_BASE_URL=https://api.minimaxi.com/v1
+MODEL_ID=MiniMax-M2.7
+FLASH_MODEL_ID=MiniMax-M2.7-highspeed
+```
+
+验证安装：
+
+```bash
+uv run python cli.py --help
+uv run python cli.py skills list
+uv run python cli.py --interactive
+```
 
 > [!WARNING]
-> **本项目还处于测试阶段，还有诸多功能不完善，请谨慎使用。**
+> `init`、`plan`、`write`、`review`、RAG 和 Batch 命令可能调用付费 API。先确认模型、单价、额度和工作区备份。
 
-Novel-Claude 是一个基于大语言模型（如智谱 GLM-4）构建的全自动长篇小说生成管线。在 V3 版本中，它从传统的线性脚本流水线彻底进化为具有极高扩展性的 **微内核 + 插件生态架构 (Microkernel & Plugin Architecture)**。
+## 配置
 
-通过底层的 `EventBus` 事件引擎与动态 `PluginManager`，它支持极其复杂的社区插件生态（Skills）以及基于 ReAct 多轮交互的复杂智能体（Agents）。
+项目从根目录的 `env` 读取密钥，从 `config.json` 读取非敏感的写作参数。
 
-## ✨ 核心特性
+| 变量 | 用途 |
+|---|---|
+| `LLM_PROVIDER` | 提供商标识；使用智谱时设为 `zhipu` |
+| `LLM_API_KEY` | 通用聊天 API 密钥 |
+| `LLM_BASE_URL` | OpenAI 兼容接口地址 |
+| `MODEL_ID` | 主要生成模型 |
+| `FLASH_MODEL_ID` | 小型任务与最小连通性测试模型 |
+| `ZHIPU_API_KEY` | 智谱 Batch API 与内置 RAG 嵌入密钥 |
+| `BATCH_MODEL_ID` | Batch 请求使用的智谱模型，默认 `glm-4` |
+| `NOVEL_NAME` | 可选工作区覆盖，生成 `.novel_<name>/` |
 
-- **微内核插件系统 (Microkernel & Plugin Ecosystem)**: 所有的附加功能（如动态检索记忆 RAG、战斗合理性检测等）被剥离为主时间线之外的插件（Skills）。支持热重载（Hot-Reload）与错误护航隔离，单个插件崩溃不影响数小时的生成进程。
-- **复杂智能体支撑 (Complex Agents)**:
-  - 🖋️ **Editor Agent (毒舌主编智能体)**: 在章节生成末尾挂载，启用 ReAct 多轮循环思考对草稿进行严格审稿，自动修复视角跳跃和上下文割裂。
-  - 🤖 **Skill Builder Agent (元生成器)**: 系统级别的 Meta-Generation。在 CLI 中输入一行自然语言，系统将**自动撰写并编译合法外挂插件 (Skills)** 落盘生效。
-- **降本提效 (Batch API)**: 原生支持智谱/OpenAI 格式的 Batch API 提交流水线，支持离线 5 折并发生成海量章节，并自动拼接、回调。
+旧版 `MINIMAX_API_KEY`、`MINIMAX_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL` 仍可作为回退。优先级为通用变量 → MiniMax 旧变量 → Anthropic 旧变量。由于运行时使用 OpenAI SDK，已知的 MiniMax `/anthropic` 旧地址会自动转换为 `/v1` OpenAI 兼容地址。
 
----
+当 `LLM_PROVIDER=zhipu` 且未单独设置 `ZHIPU_API_KEY` 时，智谱功能会复用 `LLM_API_KEY`。其他提供商不会把聊天密钥误传给智谱服务。
 
-## 🏗️ 架构总览
+`LLM_PROVIDER` 不会替你自动选择聊天端点或模型；`LLM_BASE_URL`、`MODEL_ID` 与密钥必须属于同一个兼容服务。
 
-整个生成管线被切分为三大核心引擎，引擎之间通过 `NovelContext` 共享白板及 `EventBus` 广播串行：
+## 使用方式
 
-1. `world_builder.py` (世界观造物主): 根据一句话创意（Logline），构建严格 JSON 格式的背景设定、阵营、人物列表。
-2. `volume_planner.py` (分卷派单员): 定制 10 卷纲要，并将大段卷纲拆解为精准到场景的小说打点（Beats），且通过算法强制归一化控制为每章 5000 字精确产出。
-3. `scene_writer.py` (执笔车间): 孵化 Subagents 无死角执行场景任务，并交由 Director Agent 进行定稿。
+### CLI / REPL 命令矩阵
 
-```text
-novel_claude/
-├── core/                       # 发动机微内核
-│   ├── event_bus.py            # 全局事件总线（Fault Tolerance）
-│   ├── plugin_manager.py       # 动态插件扫描与加载器
-│   ├── base_skill.py           # V3 标准化插件基类
-│   ├── novel_context.py        # 共享生命周期上下文
-│   └── agents/                 # 复杂推理智能体
-│       ├── editor_agent.py     # 毒舌主编 ReAct Agent
-│       └── skill_builder_agent.py  # Meta-Generation 元生成器
-├── skills/                     # 插件挂载文件夹（放入即生效）
-│   └── core_memory_rag/        # 原生的 RAG 记忆流媒体检索插件
-├── world_builder.py            # 核心引擎一：设定构建
-├── volume_planner.py           # 核心引擎二：分卷与场景切分
-├── scene_writer.py             # 核心引擎三：片段执笔与合并
-├── cli.py                      # 终端入口
-└── utils/                      # 配置文件与 LLM 客户端 API 层
-```
+| 任务 | 单次 CLI | 交互式 REPL |
+|---|---|---|
+| 完整世界构建 | `python cli.py init "一句话创意"` | `init "一句话创意"` |
+| 单阶段重跑 | `python cli.py expand` / `python cli.py world` / `python cli.py blueprint` | `expand` / `world` / `blueprint` |
+| 全书分卷 | `python cli.py plan` | `plan` |
+| 指定卷细纲 | `python cli.py plan 1` 或 `plan --volume 1` | `plan 1` 或 `plan --volume 1` |
+| 写章 | `python cli.py write --volume 1 --chapters 1-5` | `write --volume 1 --chapters 1-5` |
+| 构建 Batch | `python cli.py batch-build --volume 1 --chapters 1-5` | `batch build --volume 1 --chapters 1-5` |
+| 提交 / 同步 Batch | `python cli.py batch-submit <file>` / `python cli.py batch-sync <id>` | `batch submit <file>` / `batch sync <id>` |
+| 重建 RAG | `python cli.py reindex --volume 1 --chapters 1-5` | `reindex --volume 1 --chapters 1-5` |
+| 审核 | `python cli.py audit --stage 1` 或 `--chapter 1` | `audit --stage 1` 或 `--chapter 1` |
+| 实体跟踪 | `python cli.py track --volume 1 --chapter 1` | `track --volume 1 --chapter 1` |
+| 多文件 AI 审阅 | `python cli.py review -f <file> -i <要求>` | `review -f <file> -i <要求>` |
+| Skill 管理 | `python cli.py skills <list\|enable\|disable\|reload\|build>` | `skills <list\|enable\|disable\|reload\|build>` |
+| 项目管理 | — | `projects <create\|switch\|list\|info\|delete>` |
+| 工作区文件 | — | `ls` / `cat` / `find` / `cd` / `pwd` |
+| 查看 / 修改配置 | — | `settings show` / `settings set <key> <value>` |
+| REPL 控制 | — | `/help` / `/history` / `/clear` / `/exit` |
 
----
+### 单次 CLI
 
-## 🛠️ 安装与使用
-
-### 1. 环境准备
-确保您的 Python >= 3.10。
 ```bash
-# 激活环境后安装依赖
-uv pip install -r requirements.txt
-```
+# 完整世界构建：金手指 → 一句话梗概 → 故事大纲 → 世界设定 → 核心蓝图
+uv run python cli.py init "一个关于……的故事"
 
-### 2. CLI 快速使用
+# 可选：单独重跑某个世界构建阶段
+uv run python cli.py expand
+uv run python cli.py world
+uv run python cli.py blueprint
 
-#### 基础生成流程
-```bash
-# 阶段 1：一句话初始化世界观
-uv run python cli.py init "一个在修真界利用赛博插件强开灵根的科幻转玄幻故事"
-
-# 阶段 2：规划宏观 10 卷的主线大纲
+# 生成全书分卷大纲；再生成第 1 卷细纲
 uv run python cli.py plan
-
-# 阶段 2.5：为第 1 卷生成细分到微观单元的 50 章 Scene Beats
 uv run python cli.py plan --volume 1
+# 也支持：uv run python cli.py plan 1
 
-# 阶段 3：召唤执笔集群实时码字生成第 1 卷 1 到 5 章
+# 写第 1 卷第 1～5 章
 uv run python cli.py write --volume 1 --chapters "1-5"
 
-# 阶段 4：使用 AI 进行局部审阅与多文件关联修改
-uv run python cli.py review -f ".novel/factions.json" -f ".novel/power_levels.json" -i "将金丹期统一改为结丹期"
+# 审核与实体跟踪
+uv run python cli.py audit --chapter 1
+uv run python cli.py track --volume 1 --chapter 1
 ```
 
-#### Batch API 批量写作
+Batch 工作流：
+
 ```bash
-# 构建 JSONL 请求文件
-uv run python cli.py batch-build --volume 1 --chapters "1-50"
-
-# 提交异步任务（会返回 Batch ID，请妥善保存）
-uv run python cli.py batch-submit .batch/vol_01_ch_1_50_req.jsonl
-
-# 同步合并成稿（轮询状态并自动下载合并）
+uv run python cli.py batch-build --volume 1 --chapters "1-10"
+uv run python cli.py batch-submit <jsonl_path>
 uv run python cli.py batch-sync <batch_id>
 ```
 
-#### V3 插件管理命令
+Skill 管理：
+
 ```bash
-# 列出所有插件（包含已加载、已禁用、报错）
 uv run python cli.py skills list
-
-# 禁用/启用某个插件
-uv run python cli.py skills disable ext_gold_finger
 uv run python cli.py skills enable ext_gold_finger
-
-# 重载全部插件（修改代码后使之生效）
-uv run python cli.py skills reload
-
-# 用自然语言让 AI 自动生成一个插件！
-uv run python cli.py skills build "帮我写一个Skill，在每次生成前注入一句主角很帅"
+uv run python cli.py skills disable ext_gold_finger
+uv run python cli.py skills reload [name]
+uv run python cli.py skills build "描述希望生成的插件"
 ```
 
----
+### 交互式 REPL
 
-## 🔌 V3 插件与外挂生态
-
-V3 引擎的精髓在于无穷无尽的功能扩展。所有的扩展统称为 `Skill`，必须继承 `BaseSkill` 基类。插件会被 `PluginManager` 动态接管并拦截底层 `EventBus` 各个周期的发信事件。
-
-### 快速上手：手动创建插件
-
-1. 在 `skills/` 目录下创建文件夹，如 `skills/my_awesome_skill/`
-2. 在其中创建 `skill.py`：
-```python
-from core.base_skill import BaseSkill
-
-class MyAwesomeSkill(BaseSkill):
-    def __init__(self, context):
-        super().__init__(context)
-        self.name = "MyAwesomeSkill"
-
-    def on_init(self):
-        print(f"[{self.name}] 插件已初始化！")
-
-    def on_before_scene_write(self, prompt_payload, beat_data):
-        # 在每次写作前注入自定义提示
-        prompt_payload.append("\n[系统注入] 注意：主角的表现需要冷酷且理智。")
-        return prompt_payload
-```
-3. 保存后执行 `uv run python cli.py skills reload`
-
-### 生命周期钩子一览
-
-| 钩子方法 | 触发时机 | 用途 |
-|---------|---------|------|
-| `on_init()` | 插件加载后 | 初始化资源 |
-| `on_volume_planning()` | 分卷规划时 | 干预/修改大纲 |
-| `on_before_scene_write()` | 写作生成前 | 注入记忆/设定 |
-| `on_after_scene_write()` | 写作生成后 | 统计/入库 |
-| `on_chapter_render()` | 章节终渲染时 | 替换占位符 |
-| `get_llm_tools()` | LLM 调用时 | 注册工具 |
-
-### 主动工具调用 (Active Tool Calling)
-
-V3 插件不仅可以被动注入上下文，还可以为 AI 提供**主动操作**的工具箱。继承 `BaseSkill` 后，可以覆写：
-
-1. `get_llm_tools()`: 返回 OpenAI 格式的 JSON Schema 工具定义。
-2. `execute_tool(tool_name, kwargs)`: 处理 AI 的调用逻辑并返回字符串结果。
-
-**示例：Gold Finger (金手指系统面板)**
-在 `skills/ext_gold_finger/` 中，我们实现了一个典型的"主角面板"插件：
-- **被动**：每章开始前将主角的等级、金钱、技能熟练度注入 Prompt。
-- **主动**：提供 `simplify_skill` 工具，AI 可以在剧情中决定花费"碎银"来"简化"功法。
-
-### 插件开关机制
-
-系统通过在插件文件夹下生成 `.disabled` 标记文件来实现开关逻辑，通过 CLI `skills enable/disable` 切换。
-
-### 自动创建插件 (Meta-Generation)
-
-运行以下命令让大模型自动生成插件代码：
 ```bash
-uv run python cli.py skills build "帮我写一个检测战斗描写合理性的插件"
+uv run python cli.py --interactive
 ```
-系统会自动调用大模型，按照开发规范生成合法代码，落盘到 `skills/` 目录并热重载生效。
 
----
+REPL 中使用不带 `python cli.py` 的命令，例如：
 
-## 📂 目录结构说明
+```text
+projects create demo "一句话创意"
+projects switch demo
+# 返回默认工作区
+projects switch default
+init "一句话创意"
+plan --volume 1
+batch build --volume 1 --chapters 1-10
+skills list
+/help
+/exit
+```
 
-| 目录/文件 | 说明 |
-|-----------|------|
-| `cli.py` | CLI 终端入口，所有命令的入口 |
-| `world_builder.py` | 世界观初始化引擎 |
-| `volume_planner.py` | 分卷大纲规划引擎 |
-| `scene_writer.py` | 场景写作与合并引擎 |
-| `core/` | 微内核核心模块 |
-| `core/agents/` | 智能体实现 |
-| `skills/` | 插件目录，放入即生效 |
-| `utils/` | 工具模块（LLM客户端、配置等）|
-| `docs/CLI_COMMANDS.md` | 完整 CLI 命令文档 |
+项目目录统一位于仓库根目录：默认项目为 `.novel/`，命名项目为 `.novel_<name>/`。REPL 的当前项目和历史记录保存在被 Git 忽略的 `.novel_cli_config/`。
 
----
+## 架构
 
-## 📜 内置插件
+```mermaid
+flowchart LR
+    U["CLI / REPL"] --> R["共享 Runtime"]
+    R --> C["配置与工作区"]
+    R --> W["World Builder"]
+    R --> P["Volume Planner"]
+    R --> S["Scene Writer"]
+    W --> E["EventBus"]
+    P --> E
+    S --> E
+    E --> K["Skills"]
+    K --> M["RAG / 工具 / 状态"]
+    C --> D[".novel_<name>/"]
+    W --> D
+    P --> D
+    S --> D
+```
 
-| 插件 | 说明 |
-|------|------|
-| `ext_gold_finger` | 金手指插件 |
-| `ext_world_highlight_system` | 世界高亮系统 |
-| `ext_handsome_protagonist` | 主角光环插件 |
-| `core_memory_rag` | 核心记忆 RAG 系统 |
+```text
+core/                 EventBus、运行时、插件基类与 Agent
+cli/                  REPL、命令分发、项目与设置管理
+skills/               可动态加载的 Skill
+prompts/              世界、规划、写作和审核提示词
+utils/                配置、LLM、Batch、状态与工作区工具
+world_builder.py      世界构建
+volume_planner.py     分卷、阶段和章节细纲
+scene_writer.py       章节生成、渐进保存和 Batch 结果处理
+```
+
+## 开发与测试
+
+```bash
+python -m compileall -q .
+python -m unittest discover -s tests -v
+uvx ruff check --select E9,F63,F7,F82 .
+```
+
+测试使用 mock 覆盖命令路由、配置与密钥遮蔽、客户端惰性初始化、插件回滚、项目切换、RAG 幂等写入，以及 Batch 构建、提交、轮询和结果解析；不会真实提交 Batch 任务。
+
+## 已知限制
+
+- 不同 OpenAI 兼容服务对流式输出、工具调用和 JSON 格式的支持可能不同。
+- RAG 嵌入和 Batch 目前是智谱专用功能，需要单独配置和计费。
+- 长篇生成成本高、耗时长，模型也可能产生设定矛盾或不适宜内容。
+- 自动生成的 Skill 是可执行 Python 代码；启用前必须人工审查。
+- 本项目由新手在学习过程中维护，接口和文件格式可能继续变化。
+
+欢迎提交 Issue 或 PR，但请把它当作学习项目和实验场，而不是稳定产品。
+
+## License
+
+[MIT](LICENSE)

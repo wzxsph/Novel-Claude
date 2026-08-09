@@ -1,6 +1,6 @@
 """Command dispatcher for Novel-Claude CLI."""
 import shlex
-from typing import Dict, Optional, Any
+from typing import Any, Callable, Dict
 
 from cli.commands import (
     project_commands,
@@ -9,7 +9,6 @@ from cli.commands import (
     novel_commands,
     agent_commands,
     settings_commands,
-    builtins
 )
 
 
@@ -17,7 +16,7 @@ class CommandDispatcher:
     """Routes commands to appropriate handlers."""
 
     def __init__(self):
-        self.commands: Dict[str, callable] = {}
+        self.commands: Dict[str, Callable] = {}
         self._register_commands()
 
     def _register_commands(self):
@@ -39,9 +38,15 @@ class CommandDispatcher:
 
         # Novel workflow commands
         self.commands['init'] = novel_commands.init
+        self.commands['expand'] = novel_commands.expand
+        self.commands['world'] = novel_commands.world
+        self.commands['blueprint'] = novel_commands.blueprint
         self.commands['plan'] = novel_commands.plan
         self.commands['write'] = novel_commands.write
         self.commands['batch'] = novel_commands.batch
+        self.commands['batch build'] = novel_commands.batch_build
+        self.commands['batch submit'] = novel_commands.batch_submit
+        self.commands['batch sync'] = novel_commands.batch_sync
         self.commands['batch_build'] = novel_commands.batch_build
         self.commands['batch_submit'] = novel_commands.batch_submit
         self.commands['batch_sync'] = novel_commands.batch_sync
@@ -60,30 +65,12 @@ class CommandDispatcher:
         # Agent commands
         self.commands['agent'] = agent_commands.handle
         self.commands['agent review'] = agent_commands.review
+        self.commands['review'] = agent_commands.review
 
         # Settings commands
         self.commands['settings'] = settings_commands.handle
         self.commands['settings show'] = settings_commands.show
         self.commands['settings set'] = settings_commands.set_value
-
-        # Builtin commands
-        self.commands['alias'] = builtins.alias
-
-        # Also register aliases without / prefix
-        for cmd in ['init', 'plan', 'write', 'reindex', 'review', 'audit', 'track']:
-            self.commands[cmd] = self._get_handler(cmd)
-
-    def _get_handler(self, cmd: str):
-        """Get handler for a command, handling aliases."""
-        handlers = {
-            'init': novel_commands.init,
-            'plan': novel_commands.plan,
-            'write': novel_commands.write,
-            'reindex': novel_commands.reindex,
-            'audit': novel_commands.audit,
-            'track': novel_commands.track,
-        }
-        return handlers.get(cmd)
 
     def dispatch(self, user_input: str) -> Dict[str, Any]:
         """Parse and dispatch a command."""
@@ -113,35 +100,7 @@ class CommandDispatcher:
                 if handler:
                     return handler(args)
 
-            # Check for Click-style commands (init, plan, write, etc.)
-            if cmd in ['init', 'plan', 'write', 'reindex', 'skills']:
-                return self._dispatch_click_command(cmd, args)
-
             return {'error': f"Unknown command: {cmd}. Type /help for available commands."}
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             return {'error': f"Command execution failed: {e}"}
-
-    def _dispatch_click_command(self, cmd: str, args: list) -> Dict[str, Any]:
-        """Dispatch to existing Click commands for backward compatibility."""
-        import subprocess
-        import sys
-
-        # Build command line args
-        cmd_args = [sys.executable, "cli.py", cmd] + args
-        try:
-            result = subprocess.run(
-                cmd_args,
-                capture_output=True,
-                text=True,
-                cwd=os.getcwd(),
-                encoding='utf-8'
-            )
-            return {'output': result.stdout + result.stderr}
-        except Exception as e:
-            return {'error': str(e)}
-
-
-import os  # For subprocess cwd

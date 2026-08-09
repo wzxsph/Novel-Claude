@@ -1,180 +1,225 @@
-# 🚀 Novel-Claude V3: エージェント型小説自動生成フレームワーク
+# Novel-Claude
+
+[简体中文](README.md) · [English](README_EN.md) · [日本語](README_JP.md)
+
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB)
+![Status](https://img.shields.io/badge/status-learning%20project-orange)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+> [!IMPORTANT]
+> **これは初心者の練習・学習用プロジェクトであり、本番向けソフトウェアではありません。**
+>
+> Python、LLM API、CLI/REPL、Agent、Skill プラグイン構成を学ぶための実験です。コードや生成文章には不具合、破壊的変更、予想外の API 費用が発生する可能性があります。本番環境や重要データには使わず、先に小説ワークスペースをバックアップしてください。
+
+Novel-Claude は、長編小説生成の実験的フレームワークです。世界設定、巻構成、章執筆、記憶検索を CLI パイプラインで接続し、Skill がイベントバス経由でコンテキストやモデル用ツールを追加できます。
+
+現在の上流版は **CLI / 対話型 REPL 専用**で、GUI は含まれていません。
+
+## 機能ステータス
+
+| 機能 | 状態 | 補足 |
+|---|---|---|
+| 単発 CLI と対話型 REPL | ローカルでスモークテスト済み | ヘルプ、ルーティング、プロジェクト切替、履歴 |
+| 世界設定・巻構成・章執筆 | 実験的 | OpenAI Chat Completions 互換サービスが必要 |
+| Skill とホットリロード | 実験的 | エラーは隔離されますが、外部 Skill は要確認 |
+| ChromaDB RAG メモリ | 実験的 | 内蔵埋め込みには Zhipu API キーが必要 |
+| Zhipu Batch API | 実験的 | 課金の可能性あり。Batch ID を保存してください |
+| AI による Skill 生成 | 高リスク実験 | 実行可能な Python を生成するため、必ずレビュー |
+
+## クイックスタート
+
+Python 3.10+ と [uv](https://docs.astral.sh/uv/) が必要です。
+
+```bash
+git clone https://github.com/wzxsph/Novel-Claude.git
+cd Novel-Claude
+
+uv venv
+uv pip install -r requirements.txt
+cp env.example env
+```
+
+`env` を編集し、最低限チャットモデルを設定します。
+
+```dotenv
+LLM_PROVIDER=minimax
+LLM_API_KEY=your-key
+LLM_BASE_URL=https://api.minimaxi.com/v1
+MODEL_ID=MiniMax-M2.7
+FLASH_MODEL_ID=MiniMax-M2.7-highspeed
+```
+
+インストール確認：
+
+```bash
+uv run python cli.py --help
+uv run python cli.py skills list
+uv run python cli.py --interactive
+```
 
 > [!WARNING]
-> **本プロジェクトは現在テスト段階にあり、多くの機能が未完成です。慎重に使用してください。**
+> `init`、`plan`、`write`、`review`、RAG、Batch は有料 API を呼ぶ場合があります。モデル、料金、残高、バックアップを先に確認してください。
 
-Novel-Claude は、大規模言語モデル（例：智譜 GLM-4）に基づいて構築された「全自動長編小説生成パイプライン」です。V3 バージョンでは、従来の線形スクリプト・パイプラインから、極めて高い拡張性を持つ **マイクロカーネル ＋ プラグイン・アーキテクチャ (Microkernel & Plugin Architecture)** へと進化しました。
+## 設定
 
-基盤となる `EventBus` イベント・エンジンと動的な `PluginManager` を通じて、非常に複雑なコミュニティ・プラグイン・エコシステム（Skills）と、ReAct によるマルチターンの対話型エージェント（Agents）をサポートしています。
+秘密情報はルートの `env`、非機密の執筆設定は `config.json` から読み込みます。
 
-## ✨ 主な特徴
+| 変数 | 用途 |
+|---|---|
+| `LLM_PROVIDER` | プロバイダー識別子。Zhipu は `zhipu` |
+| `LLM_API_KEY` | 汎用チャット API キー |
+| `LLM_BASE_URL` | OpenAI 互換エンドポイント |
+| `MODEL_ID` | 主生成モデル |
+| `FLASH_MODEL_ID` | 小規模処理・接続確認用モデル |
+| `ZHIPU_API_KEY` | Zhipu Batch と内蔵 RAG 埋め込み用キー |
+| `BATCH_MODEL_ID` | Batch 用 Zhipu モデル。既定値 `glm-4` |
+| `NOVEL_NAME` | 任意のワークスペース名。`.novel_<name>/` を使用 |
 
-- **マイクロカーネル・プラグイン・システム**: RAG メモリ検索や戦闘描写の合理性チェックなどの付加機能はすべて、メイン・タイムラインから剥離された「プラグイン（Skills）」として管理されます。ホットリロード（Hot-Reload）とエラー分離（Fault Tolerance）をサポートしており、単一のプラグインがクラッシュしても、数時間に及ぶ生成プロセスが中断されることはありません。
-- **高度なエージェント支援**:
-  - 🖋️ **Editor Agent (辛口編集者エージェント)**: ReAct ループを用いてドラフトを厳格に校閲し、視点のブレや文脈の断絶を自動的に修正します。
-  - 🤖 **Skill Builder Agent (メタ生成器)**: CLI で自然言語による要望を入力するだけで、システムが**自動的に有効なプラグイン（Skill）コードを生成・実装**します。
-- **コスト削減と効率化 (Batch API)**: 智譜/OpenAI 形式の Batch API にネイティブ対応。オフラインで大量の章を 50% の低コストで並列生成し、完了後に自動で結合・同期します。
+旧変数 `MINIMAX_API_KEY`、`MINIMAX_BASE_URL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_BASE_URL` もフォールバックとして利用できます。優先順位は汎用変数 → MiniMax 旧変数 → Anthropic 旧変数です。ランタイムは OpenAI SDK を使用するため、既知の MiniMax `/anthropic` 旧エンドポイントは OpenAI 互換の `/v1` に自動変換されます。
 
----
+`LLM_PROVIDER=zhipu` の場合、`ZHIPU_API_KEY` がなければ Zhipu 専用機能は `LLM_API_KEY` を再利用します。他社のキーを暗黙に Zhipu へ送ることはありません。
 
-## 🏗️ アーキテクチャ概要
+`LLM_PROVIDER` はチャットのエンドポイントやモデルを自動選択しません。`LLM_BASE_URL`、`MODEL_ID`、API キーは同じ互換サービスの組み合わせにしてください。
 
-生成パイプラインは 3 つのコア・エンジンに分割されており、`NovelContext` による共有状態管理と `EventBus` によるイベント・ブロードキャストによって統合されています。
+## 使い方
 
-1. `world_builder.py` (世界創造者): 一行の創意（Logline）から、厳密な JSON 形式の背景設定、陣営、キャラクター・リストを構築します。
-2. `volume_planner.py` (プロット・プランナー): 全 10 巻の概要を作成し、各巻をシーン単位のプロット（Beats）に分解。独自のアルゴリズムにより、1 章あたり正確に 5,000 字の出力を強制・正規化します。
-3. `scene_writer.py` (執筆ワークショップ): 各シーンのタスクを実行するサブエージェントを生成し、最終的に Editor Agent による定稿を行います。
+### CLI / REPL コマンド対応表
 
-```text
-novel_claude/
-├── core/                       # マイクロカーネル・エンジン
-│   ├── event_bus.py            # グローバル・サービス・バス（障害耐性）
-│   ├── plugin_manager.py       # 動的プラグイン・スキャナー & ローダー
-│   ├── base_skill.py           # V3 標準プラグイン基底クラス
-│   ├── novel_context.py        # 共有ライフサイクル・コンテキスト
-│   └── agents/                 # 推論エージェント
-│       ├── editor_agent.py     # ReAct 編集者エージェント
-│       └── skill_builder_agent.py  # メタ生成エージェント
-├── skills/                     # プラグイン・ディレクトリ
-│   └── core_memory_rag/        # 標準 RAG メモリ検索プラグイン
-├── world_builder.py            # エンジン 1: 世界観構築
-├── volume_planner.py           # エンジン 2: プロット分割
-├── scene_writer.py             # エンジン 3: シーン執筆と結合
-├── cli.py                      # ターミナル・エントリー
-└── utils/                      # 設定 & LLM クライアント
-```
+| 操作 | 単発 CLI | 対話型 REPL |
+|---|---|---|
+| 世界構築の全工程 | `python cli.py init "一行アイデア"` | `init "一行アイデア"` |
+| 単一工程の再実行 | `python cli.py expand` / `python cli.py world` / `python cli.py blueprint` | `expand` / `world` / `blueprint` |
+| 全巻構成 | `python cli.py plan` | `plan` |
+| 指定巻の詳細構成 | `python cli.py plan 1` または `plan --volume 1` | `plan 1` または `plan --volume 1` |
+| 章執筆 | `python cli.py write --volume 1 --chapters 1-5` | `write --volume 1 --chapters 1-5` |
+| Batch 入力作成 | `python cli.py batch-build --volume 1 --chapters 1-5` | `batch build --volume 1 --chapters 1-5` |
+| Batch 投稿 / 同期 | `python cli.py batch-submit <file>` / `python cli.py batch-sync <id>` | `batch submit <file>` / `batch sync <id>` |
+| RAG 再構築 | `python cli.py reindex --volume 1 --chapters 1-5` | `reindex --volume 1 --chapters 1-5` |
+| 監査 | `python cli.py audit --stage 1` または `--chapter 1` | `audit --stage 1` または `--chapter 1` |
+| エンティティ追跡 | `python cli.py track --volume 1 --chapter 1` | `track --volume 1 --chapter 1` |
+| 複数ファイル AI レビュー | `python cli.py review -f <file> -i <指示>` | `review -f <file> -i <指示>` |
+| Skill 管理 | `python cli.py skills <list\|enable\|disable\|reload\|build>` | `skills <list\|enable\|disable\|reload\|build>` |
+| プロジェクト管理 | — | `projects <create\|switch\|list\|info\|delete>` |
+| Workspace ファイル | — | `ls` / `cat` / `find` / `cd` / `pwd` |
+| 設定の確認 / 変更 | — | `settings show` / `settings set <key> <value>` |
+| REPL 操作 | — | `/help` / `/history` / `/clear` / `/exit` |
 
----
+### 単発 CLI
 
-## 🛠️ インストールと使用方法
-
-### 1. 環境構築
-Python >= 3.10 が必要です。
 ```bash
-# 依存関係のインストール
-uv pip install -r requirements.txt
-```
+# 世界構築の全工程を実行
+uv run python cli.py init "ある物語のアイデア"
 
-### 2. CLI の使用例
+# 必要な工程だけ再実行
+uv run python cli.py expand
+uv run python cli.py world
+uv run python cli.py blueprint
 
-#### 基本的な生成フロー
-```bash
-# 段階 1：世界観の初期化
-uv run python cli.py init "サイバーパンクな世界で魔術をハッキングする修仙物語"
-
-# 段階 2：全 10 巻のメイン・プロット作成
+# 全巻構成、その後に第1巻の詳細構成
 uv run python cli.py plan
-
-# 段階 2.5：第 1 巻の 50 章分の詳細プロット作成
 uv run python cli.py plan --volume 1
+# uv run python cli.py plan 1 も利用可能
 
-# 段階 3：執筆エージェントを起動して第 1 巻の 1〜5 章を生成
+# 第1巻の第1～5章を執筆
 uv run python cli.py write --volume 1 --chapters "1-5"
+
+# 監査とエンティティ追跡
+uv run python cli.py audit --chapter 1
+uv run python cli.py track --volume 1 --chapter 1
 ```
 
-#### Batch API フロー
+Batch ワークフロー：
+
 ```bash
-# JSONL リクエストファイルを構築
-uv run python cli.py batch-build --volume 1 --chapters "1-50"
-
-# 非同期タスクを提交（Batch ID が返されます、必ず保存してください）
-uv run python cli.py batch-submit .batch/vol_01_ch_1_50_req.jsonl
-
-# 同期してマージ（ステータスをポーリングし自動ダウンロード）
+uv run python cli.py batch-build --volume 1 --chapters "1-10"
+uv run python cli.py batch-submit <jsonl_path>
 uv run python cli.py batch-sync <batch_id>
 ```
 
-#### V3 プラグイン管理コマンド
+Skill 管理：
+
 ```bash
-# プラグイン一覧を表示
 uv run python cli.py skills list
-
-# 特定のプラグインを無効化/有効化
-uv run python cli.py skills disable ext_gold_finger
 uv run python cli.py skills enable ext_gold_finger
-
-# 全プラグインのホットリロード
-uv run python cli.py skills reload
+uv run python cli.py skills disable ext_gold_finger
+uv run python cli.py skills reload [name]
+uv run python cli.py skills build "作りたいプラグインの説明"
 ```
 
----
+### 対話型 REPL
 
-## 🔌 V3 プラグイン・システム
-
-### プラグインの作成方法（手動）
-
-1. `skills/` 内にフォルダを作成（例：`skills/my_awesome_skill/`）。
-2. `skill.py` を作成：
-```python
-from core.base_skill import BaseSkill
-
-class MyAwesomeSkill(BaseSkill):
-    def __init__(self, context):
-        super().__init__(context)
-        self.name = "MyAwesomeSkill"
-
-    def on_init(self):
-        print(f"[{self.name}] プラグインが初期化されました！")
-
-    def on_before_scene_write(self, prompt_payload, beat_data):
-        # 執筆開始前にプロンプトを注入
-        prompt_payload.append("\n[システム注入] 注意：主人公の行動は常に冷徹かつ理性的である必要があります。")
-        return prompt_payload
-```
-
-### ライフサイクル・フック一覧
-
-| メソッド | トリガー | 用途 |
-|---------|---------|------|
-| `on_init()` | ロード時 | リソース初期化 |
-| `on_volume_planning()` | プロット時 | アウトライン干渉・修正 |
-| `on_before_scene_write()` | 執筆前 | コンテキスト・記憶注入 |
-| `on_after_scene_write()` | 執筆後 | 統計・データベース保存 |
-| `on_chapter_render()` | 章の最終描画時 | プレースホルダ置換 |
-| `get_llm_tools()` | LLM 呼び出し時 | ツール登録 |
-
-### アクティブ・ツール・コーリング
-
-V3 プラグインは、コンテキストの「注入」だけでなく、AI が**能動的に操作できるツール**を提供できます。
-
-**例：Gold Finger (状態パネル)**
-`skills/ext_gold_finger/` で実装：
-- **受動的**: 各章の冒頭で主人公のステータス（銀両、スキル）を注入。
-- **能動的**: `simplify_skill` ツールを提供。AI は物語の中で「銀両」を消費してスキルを「簡略化」する決定ができます。
-
-### プラグイン・トグル・メカニズム
-
-`.disabled` タグファイルをプラグインフォルダに生成することでトグルを実現。CLI の `skills enable/disable` で切り替え可能。
-
-### 自動生成（メタ生成）
 ```bash
-uv run python cli.py skills build "戦闘描写の合理性をチェックするプラグインを書いて"
+uv run python cli.py --interactive
 ```
-システムは自動的に標準に準拠したコードを生成し、ホットリロードで適用します。
 
----
+REPL 内では `python cli.py` を省略します。
 
-## 📂 ディレクトリ構造
+```text
+projects create demo "一行アイデア"
+projects switch demo
+# 既定ワークスペースへ戻る
+projects switch default
+init "一行アイデア"
+plan --volume 1
+batch build --volume 1 --chapters 1-10
+skills list
+/help
+/exit
+```
 
-| パス | 説明 |
-|------|------|
-| `cli.py` | CLI ターミナル・エントリー |
-| `world_builder.py` | 世界観初期化エンジン |
-| `volume_planner.py` | 分巻大纲計画エンジン |
-| `scene_writer.py` | シーン執筆・マージエンジン |
-| `core/` | マイクロカーネル・コア・モジュール |
-| `core/agents/` | エージェント実装 |
-| `skills/` | プラグイン・ディレクトリ |
-| `utils/` | ユーティリティ（LLMクライアント、設定等）|
-| `docs/CLI_COMMANDS.md` | 完全な CLI コマンド文書 |
+ワークスペースはリポジトリ直下に置かれます。既定は `.novel/`、名前付きは `.novel_<name>/` です。REPL の状態と履歴は Git 管理外の `.novel_cli_config/` に保存されます。
 
----
+## アーキテクチャ
 
-## 📜 組み込みプラグイン
+```mermaid
+flowchart LR
+    U["CLI / REPL"] --> R["共有 Runtime"]
+    R --> C["設定と Workspace"]
+    R --> W["World Builder"]
+    R --> P["Volume Planner"]
+    R --> S["Scene Writer"]
+    W --> E["EventBus"]
+    P --> E
+    S --> E
+    E --> K["Skills"]
+    K --> M["RAG / Tools / State"]
+    C --> D[".novel_<name>/"]
+    W --> D
+    P --> D
+    S --> D
+```
 
-| プラグイン | 説明 |
-|------|------|
-| `ext_gold_finger` | 金手指プラグイン |
-| `ext_world_highlight_system` | 世界ハイライトシステム |
-| `ext_handsome_protagonist` | 主人公光环プラグイン |
-| `core_memory_rag` | コアメモリ RAG システム |
+```text
+core/                 EventBus、Runtime、Plugin 基底、Agent
+cli/                  REPL、ルーティング、プロジェクト、設定管理
+skills/               動的に読み込む Skill
+prompts/              世界設定、構成、執筆、監査プロンプト
+utils/                設定、LLM、Batch、状態、Workspace
+world_builder.py      世界構築パイプライン
+volume_planner.py     巻・段階・章のアウトライン
+scene_writer.py       章生成、段階保存、Batch 結果処理
+```
+
+## 開発とテスト
+
+```bash
+python -m compileall -q .
+python -m unittest discover -s tests -v
+uvx ruff check --select E9,F63,F7,F82 .
+```
+
+モックテストは、コマンドルーティング、設定と秘密情報のマスキング、遅延クライアント、Plugin ロールバック、プロジェクト切替、RAG の冪等書き込み、Batch の構築・投稿・ポーリング・結果解析を対象にします。実際の Batch 投稿は行いません。
+
+## 既知の制限
+
+- OpenAI 互換サービスごとにストリーミング、ツール呼び出し、JSON 挙動が異なります。
+- RAG 埋め込みと Batch は現在 Zhipu 専用で、別途課金されます。
+- 長編生成は高コストで、整合性エラーや不適切な文章が生じる場合があります。
+- 自動生成 Skill は実行可能な Python なので、必ず人手で確認してください。
+- 初心者が学習しながら保守しているため、API やファイル形式は今後も変わり得ます。
+
+Issue や Pull Request は歓迎しますが、安定製品ではなく学習用ラボとして扱ってください。
+
+## License
+
+[MIT](LICENSE)

@@ -1,6 +1,7 @@
 import json
 import os
-from utils.llm_client import client, MODEL_ID
+from utils import config
+from utils.llm_client import get_client
 
 class EditorAgent:
     """
@@ -46,8 +47,8 @@ class EditorAgent:
         for iteration in range(self.max_iterations):
             print(f"  -> 第 {iteration + 1} 轮推理...")
             
-            response = client.chat.completions.create(
-                model=MODEL_ID,
+            response = get_client().chat.completions.create(
+                model=config.MODEL_ID,
                 messages=messages,
                 tools=self.get_tools(),
                 temperature=0.3
