@@ -16,8 +16,12 @@ class _ToolSubscriber:
     def __init__(self):
         self.calls = []
 
+    def get_llm_tools(self):
+        return [{"type": "function", "function": {"name": "demo"}}]
+
     def execute_tool(self, tool_name, kwargs):
         self.calls.append((tool_name, kwargs))
+        return "tool complete"
 
 
 class LLMClientTests(unittest.TestCase):
@@ -92,8 +96,17 @@ class LLMClientTests(unittest.TestCase):
                 ]
             ),
         ]
+        follow_up_chunks = [
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content=" world", tool_calls=None)
+                    )
+                ]
+            )
+        ]
         fake_client = MagicMock()
-        fake_client.chat.completions.create.return_value = chunks
+        fake_client.chat.completions.create.side_effect = [chunks, follow_up_chunks]
         subscriber = _ToolSubscriber()
         event_bus.register(subscriber)
 
@@ -108,8 +121,13 @@ class LLMClientTests(unittest.TestCase):
                 tools=[{"type": "function", "function": {"name": "demo"}}],
             )
 
-        self.assertEqual(result, "hello")
+        self.assertEqual(result, "hello world")
         self.assertEqual(subscriber.calls, [("demo", {"n": 1})])
+        follow_up_messages = fake_client.chat.completions.create.call_args_list[1].kwargs[
+            "messages"
+        ]
+        self.assertEqual(follow_up_messages[-1]["role"], "tool")
+        self.assertEqual(follow_up_messages[-1]["content"], "tool complete")
 
     def test_api_connection_error_is_wrapped_after_retry_budget(self):
         fake_client = MagicMock()

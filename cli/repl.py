@@ -123,6 +123,7 @@ class REPL:
 
         # Save state on exit
         project_manager._save_state()
+        config.wait_for_background_tasks()
 
     def _print_help(self):
         """Print available commands."""

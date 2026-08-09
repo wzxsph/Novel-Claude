@@ -60,7 +60,10 @@ class BatchWorkflowTests(unittest.TestCase):
         with (
             patch("utils.batch_client.get_batch_status", side_effect=statuses) as status,
             patch("utils.batch_client.download_batch_results", return_value=True) as download,
-            patch("scene_writer.process_batch_results") as process,
+            patch(
+                "scene_writer.process_batch_results",
+                return_value={"saved": 2, "failed": 0, "skipped": 0},
+            ) as process,
             patch("cli.commands.novel_commands.time.sleep") as sleep,
         ):
             result = novel_commands.batch_sync(["batch-1"])
@@ -88,15 +91,35 @@ class BatchWorkflowTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with patch("scene_writer.save_chapter_content") as save:
-                process_batch_results(str(result_path))
+                summary = process_batch_results(str(result_path))
 
-        self.assertEqual(
-            save.call_args_list,
-            [
-                call(1, 1, "chapter one"),
-                call(1, 2, "（该段场景生成失败）"),
-            ],
-        )
+        self.assertEqual(save.call_args_list, [call(1, 1, "chapter one")])
+        self.assertEqual(summary, {"saved": 1, "failed": 1, "skipped": 0})
+
+    def test_result_parser_isolates_malformed_and_untrusted_rows(self):
+        rows = [
+            "not-json\n",
+            json.dumps({"custom_id": "../../escape", "response": {}}) + "\n",
+            json.dumps(
+                {
+                    "custom_id": "v02_ch003",
+                    "response": {
+                        "body": {
+                            "choices": [{"message": {"content": "valid chapter"}}]
+                        }
+                    },
+                }
+            )
+            + "\n",
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result_path = Path(temp_dir) / "results.jsonl"
+            result_path.write_text("".join(rows), encoding="utf-8")
+            with patch("scene_writer.save_chapter_content") as save:
+                summary = process_batch_results(str(result_path))
+
+        save.assert_called_once_with(2, 3, "valid chapter")
+        self.assertEqual(summary, {"saved": 1, "failed": 1, "skipped": 1})
 
 
 if __name__ == "__main__":

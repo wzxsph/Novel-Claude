@@ -137,9 +137,10 @@ def plan_macro_outlines(total_volumes: int = 10):
     data = generate_json(prompt, schema_model)
 
     data_dict = data if isinstance(data, dict) else data.model_dump()
-    data_list = [data_dict]
-    data_list = event_bus_emit_pipeline("on_volume_planning", data_list)
-    data_dict = data_list[0] if data_list else data_dict
+    planned_data = event_bus_emit_pipeline("on_volume_planning", data_dict)
+    if not isinstance(planned_data, dict):
+        raise TypeError("on_volume_planning 插件必须返回分卷大纲对象")
+    data_dict = planned_data
 
     for vol in data_dict.get("volumes", []):
         vol_id = vol["volume_id"]

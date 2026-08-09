@@ -1,4 +1,5 @@
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -49,8 +50,9 @@ class ProjectManagerTests(unittest.TestCase):
                 self.assertEqual(reset_runtime.call_count, 3)
 
     def test_project_name_rejects_path_traversal(self):
-        with self.assertRaises(ValueError):
-            project_manager_module._validate_project_name("../escape")
+        for invalid in ("../escape", "line\nbreak", "cli_config", "projects"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                project_manager_module._validate_project_name(invalid)
 
     def test_default_name_is_reserved_for_the_default_workspace(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -75,6 +77,40 @@ class ProjectManagerTests(unittest.TestCase):
                     manager.create_project("default")
                 with self.assertRaises(ValueError):
                     manager.delete_project("default")
+
+    def test_corrupt_state_values_fall_back_to_safe_defaults(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state_dir = root / ".novel_cli_config"
+            state_dir.mkdir()
+            state_file = state_dir / "state.json"
+            state_file.write_text(
+                json.dumps(
+                    {
+                        "current_project": "../escape",
+                        "current_volume": "not-a-number",
+                        "current_chapter": -4,
+                        "current_path": str(root.parent),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(project_manager_module, "PROJECT_ROOT", root),
+                patch.object(project_manager_module, "CONFIG_DIR", state_dir),
+                patch.object(project_manager_module, "CONFIG_FILE", state_file),
+                patch.object(config, "NOVEL_NAME", ""),
+                patch.dict(os.environ, {"NOVEL_NAME": ""}, clear=False),
+                patch.object(config, "set_active_novel"),
+            ):
+                manager = project_manager_module.ProjectManager()
+
+            self.assertIsNone(manager.current_project)
+            self.assertEqual(manager.current_volume, 1)
+            self.assertEqual(manager.current_chapter, 1)
+            self.assertEqual(manager.current_path, root / ".novel")
+            with self.assertRaises(ValueError):
+                manager.update_context(volume=0)
 
 
 if __name__ == "__main__":

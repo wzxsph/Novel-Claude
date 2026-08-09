@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from cli.commands import novel_commands
@@ -49,6 +50,16 @@ class CommandTests(unittest.TestCase):
                 ["--volume", "1", "--chapters", "1-3"]
             )
         self.assertIn("失败 2 章", result["error"])
+
+    def test_reindex_fails_when_rag_skill_is_not_loaded(self):
+        runtime = SimpleNamespace(
+            context=SimpleNamespace(active_skills={})
+        )
+        with patch("core.runtime.get_runtime", return_value=runtime):
+            result = novel_commands.reindex(
+                ["--volume", "1", "--chapters", "1"]
+            )
+        self.assertIn("RAG Skill 未加载", result["error"])
 
     def test_advertised_stage_commands_are_registered(self):
         dispatcher = CommandDispatcher()

@@ -38,14 +38,26 @@ class PluginManager:
             self._load_skill(plugin_path.name, skill_file)
 
     def _find_skill_class(self, module: ModuleType):
+        candidates = []
         for attr_name in dir(module):
             attr: Any = getattr(module, attr_name)
-            if isinstance(attr, type) and issubclass(attr, BaseSkill) and attr is not BaseSkill:
-                return attr
-        return None
+            if (
+                isinstance(attr, type)
+                and issubclass(attr, BaseSkill)
+                and attr is not BaseSkill
+                and attr.__module__ == module.__name__
+            ):
+                candidates.append(attr)
+        if len(candidates) > 1:
+            names = ", ".join(candidate.__name__ for candidate in candidates)
+            raise TypeError(f"插件中存在多个 BaseSkill 子类，请仅保留一个: {names}")
+        return candidates[0] if candidates else None
 
     def _load_skill(self, module_name: str, file_path: str | Path) -> bool:
         file_path = Path(file_path)
+        previous_module = sys.modules.get(module_name)
+        previous_skill = self.context.active_skills.get(module_name)
+        previous_subscribers = list(event_bus.subscribers)
         try:
             spec = importlib.util.spec_from_file_location(module_name, file_path)
             if spec is None or spec.loader is None:
@@ -64,13 +76,21 @@ class PluginManager:
             # remain active on the global event bus.
             skill_instance.on_init()
 
+            if previous_skill is not None:
+                event_bus.unregister(previous_skill)
             self.loaded_modules[module_name] = module
             self.context.active_skills[module_name] = skill_instance
             event_bus.register(skill_instance)
             print(f"  [✓] 加载插件成功: {skill_instance.name}")
             return True
         except Exception as exc:
-            self._unload_skill(module_name)
+            # Keep the last working instance active when a hot reload contains
+            # a syntax, import, class-discovery, or initialization error.
+            if previous_module is None:
+                sys.modules.pop(module_name, None)
+            else:
+                sys.modules[module_name] = previous_module
+            event_bus.subscribers[:] = previous_subscribers
             try:
                 print(f"  [🚨] 加载插件 {module_name} 失败: {exc}")
             except UnicodeEncodeError:
@@ -91,15 +111,16 @@ class PluginManager:
 
     def hot_reload(self, module_name: str) -> bool:
         print(f"[PluginManager] 正在热更新插件 {module_name}...")
-        self._unload_skill(module_name)
 
         plugin_path = self.skills_dir / module_name
         skill_file = plugin_path / "skill.py"
         disabled_file = plugin_path / ".disabled"
         if not skill_file.exists():
+            self._unload_skill(module_name)
             print(f"[ERROR] 找不到此插件文件: {skill_file}")
             return False
         if disabled_file.exists():
+            self._unload_skill(module_name)
             print(f"[PluginManager] {module_name} 已处于禁用状态，已卸载。")
             return True
 

@@ -15,7 +15,7 @@ After each chapter:
 import json
 from pathlib import Path
 from typing import Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from utils import config
 from utils.llm_client import generate_json
 
@@ -39,9 +39,9 @@ class EntityStateSnapshotSchema(BaseModel):
     thinking: Optional[str] = None
     chapter_id: int
     volume_id: int
-    character_changes: List[EntityStateChange] = []
-    scene_changes: List[EntityStateChange] = []
-    organization_changes: List[EntityStateChange] = []
+    character_changes: List[EntityStateChange] = Field(default_factory=list)
+    scene_changes: List[EntityStateChange] = Field(default_factory=list)
+    organization_changes: List[EntityStateChange] = Field(default_factory=list)
 
 
 # ============================================================================
@@ -163,9 +163,21 @@ def extract_chapter_entities(chapter_path: Path) -> dict:
     content_data = blueprint.get("content", blueprint)
 
     entity_names = {
-        "characters": [c.get("name") for c in content_data.get("character_cards", [])],
-        "scenes": [s.get("name") for s in content_data.get("scene_cards", [])],
-        "organizations": [o.get("name") for o in content_data.get("organization_cards", [])]
+        "characters": [
+            c.get("name")
+            for c in content_data.get("character_cards", [])
+            if c.get("name")
+        ],
+        "scenes": [
+            s.get("name")
+            for s in content_data.get("scene_cards", [])
+            if s.get("name")
+        ],
+        "organizations": [
+            o.get("name")
+            for o in content_data.get("organization_cards", [])
+            if o.get("name")
+        ],
     }
 
     # Simple keyword matching - in production, use NER
@@ -252,7 +264,10 @@ def apply_entity_changes(volume_id: int, chapter_id: int, changes: dict):
         if name in current_states["characters"]:
             # Update dynamic_state with new change
             current_desc = current_states["characters"][name].get("dynamic_info", "")
-            new_change = f"[第{chapter_id}章] {change.get('description', '')}"
+            new_change = (
+                f"[第{volume_id}卷第{chapter_id}章] "
+                f"{change.get('description', '')}"
+            )
             if current_desc:
                 current_states["characters"][name]["dynamic_info"] = current_desc + "\n" + new_change
             else:

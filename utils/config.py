@@ -106,6 +106,12 @@ def _normalize_novel_name(name: str | None) -> str:
         separator in cleaned for separator in ("/", "\\", "\x00")
     ):
         raise ValueError("NOVEL_NAME 不能包含路径分隔符")
+    if any(ord(character) < 32 for character in cleaned):
+        raise ValueError("NOVEL_NAME 不能包含控制字符")
+    if len(cleaned) > 80:
+        raise ValueError("NOVEL_NAME 不能超过 80 个字符")
+    if cleaned.lower() in {"cli_config", "projects"}:
+        raise ValueError(f"NOVEL_NAME={cleaned} 与本地状态目录冲突")
     return cleaned
 
 
@@ -160,7 +166,12 @@ def reload_workspace(*, ensure: bool = True) -> Path:
     return set_active_novel(_resolve_initial_novel_name(), ensure=ensure)
 
 
-set_active_novel(_resolve_initial_novel_name(), ensure=False)
+try:
+    set_active_novel(_resolve_initial_novel_name(), ensure=False)
+except ValueError:
+    # A hand-edited or partially written local state file must not make even
+    # `cli.py --help` unusable. Fall back to the default workspace.
+    set_active_novel(None, ensure=False)
 
 
 _active_threads: list[threading.Thread] = []

@@ -43,12 +43,22 @@ class ChapterState:
 
     @classmethod
     def from_dict(cls, data: dict) -> "ChapterState":
-        state = cls(data["volume_id"], data["chapter_id"])
-        state.state = data.get("state", STATE_PENDING)
-        state.generated_chars = data.get("generated_chars", 0)
+        volume_id = int(data["volume_id"])
+        chapter_id = int(data["chapter_id"])
+        if volume_id <= 0 or chapter_id <= 0:
+            raise ValueError("卷章编号必须为正整数")
+        state = cls(volume_id, chapter_id)
+        saved_state = data.get("state", STATE_PENDING)
+        state.state = (
+            saved_state
+            if saved_state
+            in {STATE_PENDING, STATE_GENERATING, STATE_COMPLETED, STATE_FAILED}
+            else STATE_PENDING
+        )
+        state.generated_chars = max(0, int(data.get("generated_chars", 0)))
         state.last_updated = data.get("last_updated")
-        state.error_message = data.get("error_message", "")
-        state.retry_count = data.get("retry_count", 0)
+        state.error_message = str(data.get("error_message", ""))
+        state.retry_count = max(0, int(data.get("retry_count", 0)))
         return state
 
 
@@ -64,10 +74,19 @@ class ChapterStateManager:
     def _load(self):
         """Load states from file"""
         if self.state_file.exists():
-            with open(self.state_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                for chapter_data in data.get("chapters", []):
+            try:
+                with open(self.state_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                return
+            if not isinstance(data, dict):
+                return
+            for chapter_data in data.get("chapters", []):
+                try:
                     state = ChapterState.from_dict(chapter_data)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if state.volume_id == self.volume_id:
                     self.chapters[state.chapter_id] = state
 
     def _save(self):
@@ -77,11 +96,17 @@ class ChapterStateManager:
             "last_updated": datetime.now().isoformat(),
             "chapters": [s.to_dict() for s in self.chapters.values()]
         }
-        with open(self.state_file, 'w', encoding='utf-8') as f:
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        temporary_file = self.state_file.with_suffix(".json.tmp")
+        with open(temporary_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        temporary_file.replace(self.state_file)
 
     def get_state(self, chapter_id: int) -> ChapterState:
         """Get or create state for a chapter"""
+        chapter_id = int(chapter_id)
+        if chapter_id <= 0:
+            raise ValueError("章号必须为正整数")
         if chapter_id not in self.chapters:
             self.chapters[chapter_id] = ChapterState(self.volume_id, chapter_id)
         return self.chapters[chapter_id]
@@ -100,7 +125,7 @@ class ChapterStateManager:
     def update_progress(self, chapter_id: int, chars: int):
         """Update generation progress (for progressive saving)"""
         s = self.get_state(chapter_id)
-        s.generated_chars = chars
+        s.generated_chars = max(0, int(chars))
         s.last_updated = datetime.now().isoformat()
         self._save()
 

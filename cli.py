@@ -32,12 +32,17 @@ def _wait_for_tasks():
 @click.group()
 def cli():
     """Novel-Claude V3 — experimental agentic novel generation CLI."""
-    from core.runtime import get_runtime
     from utils import config
 
     current_project = config.NOVEL_NAME or "Default"
     click.echo(click.style(f"当前激活项目: {current_project}", fg="cyan", bold=True))
-    get_runtime()
+
+
+def _ensure_runtime():
+    """Load Skills only for commands whose execution uses lifecycle hooks."""
+    from core.runtime import get_runtime
+
+    return get_runtime()
 
 
 @cli.command()
@@ -85,6 +90,7 @@ def plan(volume_arg: int | None, volume_option: int | None):
     if volume_arg is not None and volume_option is not None:
         raise click.UsageError("卷号只能指定一次")
     volume = volume_option if volume_option is not None else volume_arg
+    _ensure_runtime()
     from cli.commands.novel_commands import plan as run
 
     _emit_result(run([] if volume is None else [str(volume)]))
@@ -96,6 +102,7 @@ def plan(volume_arg: int | None, volume_option: int | None):
 @click.option("--chapters", required=True, help='章节范围，如 "1-5" 或 "1"。')
 def write(volume: int, chapters: str):
     """Generate chapters with progressive saving and enabled Skills."""
+    _ensure_runtime()
     from cli.commands.novel_commands import write as run
 
     _emit_result(run(["--volume", str(volume), "--chapters", chapters]))
@@ -136,6 +143,7 @@ def batch_sync(batch_id: str):
 @click.option("--chapters", required=True)
 def reindex(volume: int, chapters: str):
     """Reindex completed chapters into the enabled RAG Skill."""
+    _ensure_runtime()
     from cli.commands.novel_commands import reindex as run
 
     _emit_result(run(["--volume", str(volume), "--chapters", chapters]))
@@ -263,4 +271,5 @@ if __name__ == "__main__":
         cli()
     except KeyboardInterrupt:
         click.echo("\n[WARN] 收到停止信号，正在等待后台任务...")
+    finally:
         _wait_for_tasks()
